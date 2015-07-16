@@ -1,1 +1,80 @@
-type t = int
+type timestamp <ocaml from="Core" t="timestamp"> = abstract
+
+(* RFC 5545 sec. 3.3.10. Recurrence Rule *)
+
+type recur = recur_rule_part list
+  (* The rule parts are not ordered in any
+     particular sequence.
+
+     The FREQ rule part is REQUIRED,
+     but MUST NOT occur more than once.
+
+     The UNTIL or COUNT rule parts are OPTIONAL,
+     but they MUST NOT occur in the same 'recur'.
+
+     The other rule parts are OPTIONAL,
+     but MUST NOT occur more than once. *)
+
+type recur_rule_part = [
+  | Freq of freq
+  | Until of enddate
+  | Count of int
+  | Interval of int
+  | Bysecond of byseclist
+  | Byminute of byminlist
+  | Byhour of byhrlist
+  | Byday of bywdaylist
+  | Bymonthday of bymodaylist
+  | Byyearday of byyrdaylist
+  | Byweekno of bywknolist
+  | Bymonth of bymolist
+  | Bysetpos of bysplist
+  | Wkst of weekday
+]
+
+type freq = [ Secondly | Minutely | Hourly | Daily
+            | Weekly | Monthly | Yearly ]
+
+type enddate = timestamp
+
+type byseclist = seconds list
+type seconds = int <ocaml valid="fun x -> x >= 0 && x <= 60">
+  (* 0 to 60 *)
+
+type byminlist = minutes list
+type minutes = int <ocaml valid="fun x -> x >= 0 && x <= 59">
+  (* 0 to 59 *)
+
+type byhrlist = hour list
+type hour = int <ocaml valid="fun x -> x >= 0 && x <= 23">
+  (* 0 to 23 *)
+
+type bywdaylist = weekdaynum list
+type weekdaynum = (ordwk option (* +/- 1 to 53 *) * weekday)
+type ordwk = int <ocaml valid="
+  fun x -> x > 0 && x <= 53 || x >= -53 && x < 0
+">
+type weekday = [ Sunday | Monday | Tuesday | Wednesday
+               | Thursday | Friday | Saturday ]
+
+type bymodaylist = monthdaynum list
+type monthdaynum = ordmoday (* +/- 1 to 31 *)
+type ordmoday = int <ocaml valid="
+  fun x -> x > 0 && x <= 31 || x >= -31 && x < 0
+">
+
+type byyrdaylist = yeardaynum list
+type yeardaynum = ordyrday (* +/- 1 to 366 *)
+type ordyrday = int <ocaml valid="
+  fun x -> x > 0 && x <= 366 || x >= -366 && x < 0
+">
+
+type bywknolist = weeknum list
+type weeknum = ordwk
+
+type bymolist = monthnum list
+type monthnum = int <ocaml valid="fun x -> x >= 1 && x <= 12">
+  (* 1 to 12 *)
+
+type bysplist = setposday list
+type setposday = yeardaynum
