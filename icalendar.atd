@@ -18,8 +18,8 @@ type recur = recur_rule_part list
 type recur_rule_part = [
   | Freq of freq
   | Until of enddate
-  | Count of int
-  | Interval of int
+  | Count of positive_int
+  | Interval of positive_int
   | Bysecond of byseclist
   | Byminute of byminlist
   | Byhour of byhrlist
@@ -36,6 +36,8 @@ type freq = [ Secondly | Minutely | Hourly | Daily
             | Weekly | Monthly | Yearly ]
 
 type enddate = timestamp
+
+type positive_int = int <ocaml valid="fun x -> x > 0">
 
 type byseclist = seconds list
 type seconds = int <ocaml valid="fun x -> x >= 0 && x <= 60">
