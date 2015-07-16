@@ -1,0 +1,17 @@
+OCAML_LIBS = $(OCAML_LIBS_icalendar)
+
+FILES[] =
+  icalendar_t
+  icalendar_j
+  icalendar_v
+  icalendar_rrule
+
+Atdgen(icalendar, -j-std)
+OCamlLibrary(icalendar, $(FILES))
+Meta(icalendar)
+
+.DEFAULT: META icalendar.cma icalendar.cmxa
+
+.PHONY: clean
+clean:
+	rm -f *.o *.a *.cm* *~ *.annot *.run *.opt META $(ATDGEN_OUTFILES)
