@@ -1,4 +1,4 @@
-type timestamp <ocaml from="Core" t="timestamp"> = abstract
+type localtime <ocaml from="Core" t="localtime"> = abstract
 
 (* RFC 5545 sec. 3.3.10. Recurrence Rule *)
 
@@ -35,7 +35,7 @@ type recur_rule_part = [
 type freq = [ Secondly | Minutely | Hourly | Daily
             | Weekly | Monthly | Yearly ]
 
-type enddate = timestamp
+type enddate = localtime
 
 type positive_int = int <ocaml valid="fun x -> x > 0">
 
