@@ -67,17 +67,17 @@ and parse_weekdaynum s =
     )
   else (None, parse_weekday s)
 
-and parse_bywdaylist l = assert false
+and parse_bywdaylist l = List.map parse_weekdaynum (String.nsplit l ~by:",")
 
-and parse_bymodaylist l = assert false
+and parse_bymodaylist l = parse_int_list Icalendar_v.validate_ordmoday l
 
-and parse_byyrdaylist l = assert false
+and parse_byyrdaylist l = parse_int_list Icalendar_v.validate_ordyrday l
 
-and parse_bywknolist l = assert false
+and parse_bywknolist l = parse_int_list Icalendar_v.validate_weeknum l
 
-and parse_bymolist l = assert false
+and parse_bymolist l = parse_int_list Icalendar_v.validate_monthnum l
 
-and parse_bysplist l = assert false
+and parse_bysplist l = parse_int_list Icalendar_v.validate_setposday l
 
 and parse_weekday = function
   | "SU" -> `Sunday
