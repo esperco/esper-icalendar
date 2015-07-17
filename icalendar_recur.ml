@@ -169,31 +169,159 @@ and print_weekday = function
 let to_string = print
 
 
+(* Human-readable descriptions of recurrences
+   e.g., "Every 3 weeks on Monday and Wednesday until Jan 3, 2015" *)
+
+exception Unsupported
+  (* If you can't make this rule in our frontend interface,
+     then we won't bother trying to summarize it,
+     because recurrence rules can get really complicated.
+     Our interface is modeled after Google's,
+     so we're unlikely to encounter rules we can't summarize. *)
+
+let rec summarize rule =
+  let interval =
+    try List.find_map (function `Interval i -> Some i | _ -> None) rule
+    with Not_found -> 1
+  in
+  let period =
+    try List.find_map (function `Freq f -> Some f | _ -> None) rule
+    with Not_found -> raise (Failure ("Missing FREQ in " ^ print rule))
+  in
+  let repeats =
+    match (interval, period) with
+    | (_, `Secondly) -> raise Unsupported
+    | (_, `Minutely) -> raise Unsupported
+    | (_, `Hourly) -> raise Unsupported
+    | (1, `Daily) -> "Daily"
+    | (1, `Weekly) -> "Weekly"
+    | (1, `Monthly) -> "Monthly"
+    | (1, `Yearly) -> "Annually"
+    | (n, `Daily) -> "Every " ^ string_of_int n ^ " days"
+    | (n, `Weekly) -> "Every " ^ string_of_int n ^ " weeks"
+    | (n, `Monthly) -> "Every " ^ string_of_int n ^ " months"
+    | (n, `Yearly) -> "Every " ^ string_of_int n ^ " years"
+  in
+  let on =
+    match period with
+    | `Daily ->
+        if complex_byxxx `Daily rule then raise Unsupported else ""
+    | `Weekly ->
+        if complex_byxxx `Weekly rule then raise Unsupported else
+        let byday =
+          try List.find_map (function `Byday l -> Some l | _ -> None) rule
+          with Not_found -> [] (* TODO Use DTSTART? *)
+        in
+        if byday = [] then ""
+        else " on " ^ summarize_weekdays byday
+    | `Monthly ->
+        if complex_byxxx `Monthly rule then raise Unsupported else
+        "" (* TODO *)
+    | `Yearly ->
+        if complex_byxxx `Yearly rule then raise Unsupported
+        else ""(* TODO Mention DTSTART? Google does... *)
+    | _ -> assert false
+  in
+  let until =
+    try 
+      List.find_map (function 
+        | `Until d -> Some (Some (Util_localtime.to_string d))
+        | _ -> None
+      ) rule
+    with Not_found -> None
+  in
+  let count =
+    try
+      List.find_map (function
+        | `Count n -> Some (Some (string_of_int n))
+        | _ -> None
+      ) rule
+    with Not_found -> None
+  in
+  let extent =
+    match (until, count) with
+    | (None, None) -> "" (* forever *)
+    | (Some date, None) -> ", until " ^ date
+    | (None, Some occurrences) -> ", " ^ occurrences ^ " times"
+    | (Some _, Some _) ->
+        raise (Failure ("Both UNTIL and COUNT are given in " ^ print rule))
+  in
+  repeats ^ on ^ extent
+
+and summarize_weekdays = function
+  | [] -> assert false
+  | [day] -> summarize_weekday day
+  | [day1; day2] -> summarize_weekday day1 ^ " and " ^ summarize_weekday day2
+  | many_days ->
+      let rev = List.rev many_days in
+      let last = List.hd rev in
+      let rest = List.rev (List.tl rev) in
+      String.concat ", " (List.map summarize_weekday rest)
+        ^ ", and " ^ summarize_weekday last
+
+and summarize_weekday = function
+  | (_, `Sunday) -> "Sunday"
+  | (_, `Monday) -> "Monday"
+  | (_, `Tuesday) -> "Tuesday"
+  | (_, `Wednesday) -> "Wednesday"
+  | (_, `Thursday) -> "Thursday"
+  | (_, `Friday) -> "Friday"
+  | (_, `Saturday) -> "Saturday"
+
+and complex_byxxx period rule =
+  let byxxx =
+    List.filter (function
+      | `Byhour _ | `Byday _ | `Bymonthday _ | `Byyearday _
+      | `Byweekno _ | `Bymonth _ | `Bysetpos _ ->
+          true
+      | _ -> false
+    ) rule
+  in
+  match (period, byxxx) with
+  | (`Daily, []) -> false
+  | (`Weekly, []) -> false
+  | (`Weekly, [`Byday _]) -> false
+  | (`Monthly, []) -> false
+  | (`Monthly, [`Byday _]) -> false
+  | (`Monthly, [`Bymonthday _]) -> false
+  | (`Yearly, []) -> false
+  | _ -> true
+
+let summarize rule =
+  try summarize rule
+  with Unsupported -> "Custom rule"
+
 (* Tests *)
 
 module Test = struct
   type test_case = {
-    printed : string;
+    printed : string; (* RECUR value in RFC format *)
     parsed : recur;
+    summary : string option; (* Human-readable description *)
   }
 
   (* Examples from RFC 5545 sec. 3.8.5.3. Recurrence Rule *)
   let examples = [
     { printed = "FREQ=DAILY;COUNT=10";
-      parsed = [`Freq `Daily; `Count 10] };
+      parsed = [`Freq `Daily; `Count 10];
+      summary = None };
 
     { printed = "FREQ=DAILY;UNTIL=19971224T000000Z";
-      parsed = [`Freq `Daily; `Until (Util_localtime.of_float 882921600.)] };
+      parsed = [`Freq `Daily; `Until (Util_localtime.of_float 882921600.)];
+      summary = None };
 
     { printed = "FREQ=DAILY;INTERVAL=2";
-      parsed = [`Freq `Daily; `Interval 2] };
+      parsed = [`Freq `Daily; `Interval 2];
+      summary = None };
 
     { printed = "FREQ=DAILY;INTERVAL=10;COUNT=5";
-      parsed = [`Freq `Daily; `Interval 10; `Count 5] };
+      parsed = [`Freq `Daily; `Interval 10; `Count 5];
+      summary = None };
 
     { printed = "FREQ=DAILY;UNTIL=20000131T140000Z;BYMONTH=1";
       parsed = [`Freq `Daily; `Until (Util_localtime.of_float 949327200.);
-                `Bymonth [1]] };
+                `Bymonth [1]];
+      summary = None };
 
     { printed = "FREQ=YEARLY;UNTIL=20000131T140000Z;BYMONTH=1;\
                BYDAY=SU,MO,TU,WE,TH,FR,SA";
@@ -201,24 +329,30 @@ module Test = struct
                 `Bymonth [1]; `Byday [(None, `Sunday); (None, `Monday);
                                       (None, `Tuesday); (None, `Wednesday);
                                       (None, `Thursday); (None, `Friday);
-                                      (None, `Saturday)]] };
+                                      (None, `Saturday)]];
+      summary = None };
 
     { printed = "FREQ=WEEKLY;COUNT=10";
-      parsed = [`Freq `Weekly; `Count 10] };
+      parsed = [`Freq `Weekly; `Count 10];
+      summary = None };
 
     { printed = "FREQ=WEEKLY;UNTIL=19971224T000000Z";
-      parsed = [`Freq `Weekly; `Until (Util_localtime.of_float 882921600.)] };
+      parsed = [`Freq `Weekly; `Until (Util_localtime.of_float 882921600.)];
+      summary = None };
 
     { printed = "FREQ=WEEKLY;INTERVAL=2;WKST=SU";
-      parsed = [`Freq `Weekly; `Interval 2; `Wkst `Sunday] };
+      parsed = [`Freq `Weekly; `Interval 2; `Wkst `Sunday];
+      summary = None };
 
     { printed = "FREQ=WEEKLY;UNTIL=19971007T000000Z;WKST=SU;BYDAY=TU,TH";
       parsed = [`Freq `Weekly; `Until (Util_localtime.of_float 876182400.);
-                `Wkst `Sunday; `Byday [(None, `Tuesday); (None, `Thursday)]] };
+                `Wkst `Sunday; `Byday [(None, `Tuesday); (None, `Thursday)]];
+      summary = None };
 
     { printed = "FREQ=WEEKLY;COUNT=10;WKST=SU;BYDAY=TU,TH";
       parsed = [`Freq `Weekly; `Count 10; `Wkst `Sunday;
-                `Byday [(None, `Tuesday); (None, `Thursday)]] };
+                `Byday [(None, `Tuesday); (None, `Thursday)]];
+      summary = None };
 
     { printed = "FREQ=WEEKLY;INTERVAL=2;UNTIL=19971224T000000Z;\
                WKST=SU;BYDAY=MO,WE,FR";
@@ -226,123 +360,155 @@ module Test = struct
                 `Until (Util_localtime.of_float 882921600.);
                 `Wkst `Sunday;
                 `Byday [(None, `Monday); (None, `Wednesday);
-                        (None, `Friday)]] };
+                        (None, `Friday)]];
+      summary = None };
 
     { printed = "FREQ=WEEKLY;INTERVAL=2;COUNT=8;WKST=SU;BYDAY=TU,TH";
       parsed = [`Freq `Weekly; `Interval 2; `Count 8; `Wkst `Sunday;
-                `Byday [(None, `Tuesday); (None, `Thursday)]] };
+                `Byday [(None, `Tuesday); (None, `Thursday)]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;COUNT=10;BYDAY=1FR";
-      parsed = [`Freq `Monthly; `Count 10; `Byday [(Some 1, `Friday)]] };
+      parsed = [`Freq `Monthly; `Count 10; `Byday [(Some 1, `Friday)]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;UNTIL=19971224T000000Z;BYDAY=1FR";
       parsed = [`Freq `Monthly; `Until (Util_localtime.of_float 882921600.);
-                `Byday [(Some 1, `Friday)]] };
+                `Byday [(Some 1, `Friday)]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;INTERVAL=2;COUNT=10;BYDAY=1SU,-1SU";
       parsed = [`Freq `Monthly; `Interval 2; `Count 10;
-                `Byday [(Some 1, `Sunday); (Some (-1), `Sunday)]] };
+                `Byday [(Some 1, `Sunday); (Some (-1), `Sunday)]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;COUNT=6;BYDAY=-2MO";
-      parsed = [`Freq `Monthly; `Count 6; `Byday [(Some (-2), `Monday)]] };
+      parsed = [`Freq `Monthly; `Count 6; `Byday [(Some (-2), `Monday)]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;BYMONTHDAY=-3";
-      parsed = [`Freq `Monthly; `Bymonthday [-3]] };
+      parsed = [`Freq `Monthly; `Bymonthday [-3]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;COUNT=10;BYMONTHDAY=2,15";
-      parsed = [`Freq `Monthly; `Count 10; `Bymonthday [2; 15]] };
+      parsed = [`Freq `Monthly; `Count 10; `Bymonthday [2; 15]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;COUNT=10;BYMONTHDAY=1,-1";
-      parsed = [`Freq `Monthly; `Count 10; `Bymonthday [1; -1]] };
+      parsed = [`Freq `Monthly; `Count 10; `Bymonthday [1; -1]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;INTERVAL=18;COUNT=10;\
                  BYMONTHDAY=10,11,12,13,14,15";
       parsed = [`Freq `Monthly; `Interval 18; `Count 10;
-                `Bymonthday [10; 11; 12; 13; 14; 15]] };
+                `Bymonthday [10; 11; 12; 13; 14; 15]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;INTERVAL=2;BYDAY=TU";
-      parsed = [`Freq `Monthly; `Interval 2; `Byday [(None, `Tuesday)]] };
+      parsed = [`Freq `Monthly; `Interval 2; `Byday [(None, `Tuesday)]];
+      summary = None };
 
     { printed = "FREQ=YEARLY;COUNT=10;BYMONTH=6,7";
-      parsed = [`Freq `Yearly; `Count 10; `Bymonth [6; 7]] };
+      parsed = [`Freq `Yearly; `Count 10; `Bymonth [6; 7]];
+      summary = None };
 
     { printed = "FREQ=YEARLY;INTERVAL=2;COUNT=10;BYMONTH=1,2,3";
-      parsed = [`Freq `Yearly; `Interval 2; `Count 10; `Bymonth [1; 2; 3]] };
+      parsed = [`Freq `Yearly; `Interval 2; `Count 10; `Bymonth [1; 2; 3]];
+      summary = None };
 
     { printed = "FREQ=YEARLY;INTERVAL=3;COUNT=10;BYYEARDAY=1,100,200";
       parsed = [`Freq `Yearly; `Interval 3; `Count 10;
-                `Byyearday [1; 100; 200]] };
+                `Byyearday [1; 100; 200]];
+      summary = None };
 
     { printed = "FREQ=YEARLY;BYDAY=20MO";
-      parsed = [`Freq `Yearly; `Byday [(Some 20, `Monday)]] };
+      parsed = [`Freq `Yearly; `Byday [(Some 20, `Monday)]];
+      summary = None };
 
     { printed = "FREQ=YEARLY;BYWEEKNO=20;BYDAY=MO";
-      parsed = [`Freq `Yearly; `Byweekno [20]; `Byday [(None, `Monday)]] };
+      parsed = [`Freq `Yearly; `Byweekno [20]; `Byday [(None, `Monday)]];
+      summary = None };
 
     { printed = "FREQ=YEARLY;BYMONTH=3;BYDAY=TH";
-      parsed = [`Freq `Yearly; `Bymonth [3]; `Byday [(None, `Thursday)]] };
+      parsed = [`Freq `Yearly; `Bymonth [3]; `Byday [(None, `Thursday)]];
+      summary = None };
 
     { printed = "FREQ=YEARLY;BYDAY=TH;BYMONTH=6,7,8";
       parsed = [`Freq `Yearly; `Byday [(None, `Thursday)];
-                `Bymonth [6; 7; 8]] };
+                `Bymonth [6; 7; 8]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;BYDAY=FR;BYMONTHDAY=13";
-      parsed = [`Freq `Monthly; `Byday [(None, `Friday)]; `Bymonthday [13]] };
+      parsed = [`Freq `Monthly; `Byday [(None, `Friday)]; `Bymonthday [13]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;BYDAY=SA;BYMONTHDAY=7,8,9,10,11,12,13";
       parsed = [`Freq `Monthly; `Byday [(None, `Saturday)];
-                `Bymonthday [7; 8; 9; 10; 11; 12; 13]] };
+                `Bymonthday [7; 8; 9; 10; 11; 12; 13]];
+      summary = None };
 
     { printed = "FREQ=YEARLY;INTERVAL=4;BYMONTH=11;BYDAY=TU;\
                BYMONTHDAY=2,3,4,5,6,7,8";
       parsed = [`Freq `Yearly; `Interval 4; `Bymonth [11];
                 `Byday [(None, `Tuesday)];
-                `Bymonthday [2; 3; 4; 5; 6; 7; 8]] };
+                `Bymonthday [2; 3; 4; 5; 6; 7; 8]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;COUNT=3;BYDAY=TU,WE,TH;BYSETPOS=3";
       parsed = [`Freq `Monthly; `Count 3;
                 `Byday [(None, `Tuesday); (None, `Wednesday);
                         (None, `Thursday)];
-                `Bysetpos [3]] };
+                `Bysetpos [3]];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-2";
       parsed = [`Freq `Monthly; `Byday [(None, `Monday); (None, `Tuesday);
                                         (None, `Wednesday); (None, `Thursday);
                                         (None, `Friday)];
-                `Bysetpos [-2]] };
+                `Bysetpos [-2]];
+      summary = None };
 
     { printed = "FREQ=HOURLY;INTERVAL=3;UNTIL=19970902T170000Z";
       parsed = [`Freq `Hourly; `Interval 3;
-                `Until (Util_localtime.of_float 873219600.)] };
+                `Until (Util_localtime.of_float 873219600.)];
+      summary = None };
 
     { printed = "FREQ=MINUTELY;INTERVAL=15;COUNT=6";
-      parsed = [`Freq `Minutely; `Interval 15; `Count 6] };
+      parsed = [`Freq `Minutely; `Interval 15; `Count 6];
+      summary = None };
 
     { printed = "FREQ=MINUTELY;INTERVAL=90;COUNT=4";
-      parsed = [`Freq `Minutely; `Interval 90; `Count 4] };
+      parsed = [`Freq `Minutely; `Interval 90; `Count 4];
+      summary = None };
 
     { printed = "FREQ=DAILY;BYHOUR=9,10,11,12,13,14,15,16;BYMINUTE=0,20,40";
       parsed = [`Freq `Daily; `Byhour [9; 10; 11; 12; 13; 14; 15; 16];
-                `Byminute [0; 20; 40]] };
+                `Byminute [0; 20; 40]];
+      summary = None };
 
     { printed = "FREQ=MINUTELY;INTERVAL=20;BYHOUR=9,10,11,12,13,14,15,16";
       parsed = [`Freq `Minutely; `Interval 20;
-                `Byhour [9; 10; 11; 12; 13; 14; 15; 16]] };
+                `Byhour [9; 10; 11; 12; 13; 14; 15; 16]];
+      summary = None };
 
     { printed = "FREQ=WEEKLY;INTERVAL=2;COUNT=4;BYDAY=TU,SU;WKST=MO";
       parsed = [`Freq `Weekly; `Interval 2; `Count 4;
-                `Byday [(None, `Tuesday); (None, `Sunday)]; `Wkst `Monday] };
+                `Byday [(None, `Tuesday); (None, `Sunday)]; `Wkst `Monday];
+      summary = None };
 
     { printed = "FREQ=WEEKLY;INTERVAL=2;COUNT=4;BYDAY=TU,SU;WKST=SU";
       parsed = [`Freq `Weekly; `Interval 2; `Count 4;
-                `Byday [(None, `Tuesday); (None, `Sunday)]; `Wkst `Sunday] };
+                `Byday [(None, `Tuesday); (None, `Sunday)]; `Wkst `Sunday];
+      summary = None };
 
     { printed = "FREQ=MONTHLY;BYMONTHDAY=15,30;COUNT=5";
-      parsed = [`Freq `Monthly; `Bymonthday [15; 30]; `Count 5] };
+      parsed = [`Freq `Monthly; `Bymonthday [15; 30]; `Count 5];
+      summary = None };
   ]
 
   let test_parsing () =
     List.iter (fun { printed; parsed } ->
+      print_endline (printed ^ "\n" ^ summarize parsed);
       assert (parse printed = parsed)
     ) examples;
     true
