@@ -110,6 +110,7 @@ and parse_weekday = function
   | s -> raise (Invalid_argument ("Unrecognized weekday " ^ s))
 
 let of_string = parse
+let wrap = parse
 
 
 (* Printing *)
@@ -165,6 +166,7 @@ and print_weekday = function
   | `Saturday -> "SA"
 
 let to_string = print
+let unwrap = print
 
 
 (* Human-readable descriptions of recurrences

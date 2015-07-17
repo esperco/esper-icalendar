@@ -1,12 +1,9 @@
 OCAML_LIBS = $(OCAML_LIBS_icalendar)
 
 FILES[] =
-  icalendar_t
-  icalendar_j
-  icalendar_v
   icalendar_recur
 
-Atdgen(icalendar, -j-std)
+#Atdgen(icalendar, -j-std -j-defaults)
 OCamlLibrary(icalendar, $(FILES))
 Meta(icalendar)
 
