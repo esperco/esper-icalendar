@@ -1,5 +1,6 @@
 open Batteries
 open Icalendar_t
+open Log
 
 (* Utility function for Atdgen validation *)
 let check f x =
@@ -8,11 +9,8 @@ let check f x =
   | Some err ->
       raise (Invalid_argument (Ag_util.Validation.string_of_error err))
 
-let positive_int_of_string s =
-  let n = int_of_string s in
-  check Icalendar_v.validate_positive_int n
 
-(* Simple comma-separated lists of numbers *)
+(* Parsing *)
 
 let parse_int_list valid l =
   List.map (fun s ->
@@ -20,16 +18,72 @@ let parse_int_list valid l =
     check valid n
   ) (String.nsplit l ~by:",")
 
-let print_int_list l =
-  String.concat "," (List.map (fun n -> string_of_int n) l)
+let positive_int_of_string s =
+  let n = int_of_string s in
+  check Icalendar_v.validate_positive_int n
 
+let parse_freq = function
+  | "SECONDLY" -> `Secondly
+  | "MINUTELY" -> `Minutely
+  | "HOURLY" -> `Hourly
+  | "DAILY" -> `Daily
+  | "WEEKLY" -> `Weekly
+  | "MONTHLY" -> `Monthly
+  | "YEARLY" -> `Yearly
+  | s -> raise (Invalid_argument ("Unrecognized freq " ^ s))
 
-(* Parsing *)
+let parse_date d =
+  if String.length d = 8 then (* Date *)
+    Scanf.sscanf d "%4s%2s%2s" (fun y m d ->
+      Util_localtime.of_string (String.concat "-" [y; m; d])
+    )
+  else (* Date-Time *)
+    Scanf.sscanf d "%4s%2s%2sT%2s%2s%2s%s" (fun yr mo dy hr mi sc _z ->
+      Util_localtime.of_string (
+        String.concat "-" [yr; mo; dy] ^ "T" ^
+        String.concat ":" [hr; mi; sc]
+      )
+    )
 
-let rec parse (rrule : string) : recur =
-  List.map parse_recur_rule_part (String.nsplit rrule ~by:";")
+let parse_weekday = function
+  | "SU" -> `Sunday
+  | "MO" -> `Monday
+  | "TU" -> `Tuesday
+  | "WE" -> `Wednesday
+  | "TH" -> `Thursday
+  | "FR" -> `Friday
+  | "SA" -> `Saturday
+  | s -> raise (Invalid_argument ("Unrecognized weekday " ^ s))
 
-and parse_recur_rule_part p =
+let parse_byseclist l = parse_int_list Icalendar_v.validate_seconds l
+
+let parse_byminlist l = parse_int_list Icalendar_v.validate_minutes l
+
+let parse_byhrlist l = parse_int_list Icalendar_v.validate_hour l
+
+let parse_weekdaynum s =
+  let ordwk_char = ['0'; '1'; '2'; '3'; '4'; '5'; '6';
+                    '7'; '8'; '9'; '0'; '+'; '-'] in
+  if List.exists (String.contains s) ordwk_char then
+    Scanf.sscanf s "%d%s" (fun n wday ->
+      let ordwk = check Icalendar_v.validate_ordwk n in
+      (Some ordwk, parse_weekday wday)
+    )
+  else (None, parse_weekday s)
+
+let parse_bywdaylist l = List.map parse_weekdaynum (String.nsplit l ~by:",")
+
+let parse_bymodaylist l = parse_int_list Icalendar_v.validate_ordmoday l
+
+let parse_byyrdaylist l = parse_int_list Icalendar_v.validate_ordyrday l
+
+let parse_bywknolist l = parse_int_list Icalendar_v.validate_weeknum l
+
+let parse_bymolist l = parse_int_list Icalendar_v.validate_monthnum l
+
+let parse_bysplist l = parse_int_list Icalendar_v.validate_setposday l
+
+let parse_recur_rule_part p =
   match String.split p ~by:"=" with
   | ("FREQ", f) -> `Freq (parse_freq f)
   | ("UNTIL", d) -> `Until (parse_date d)
@@ -45,69 +99,15 @@ and parse_recur_rule_part p =
   | ("BYMONTH", l) -> `Bymonth (parse_bymolist l)
   | ("BYSETPOS", l) -> `Bysetpos (parse_bysplist l)
   | ("WKST", day) -> `Wkst (parse_weekday day)
-  | (name, value) ->
-      raise (Invalid_argument ("Unrecognized recur_rule_part " ^ p))
+  | _ -> raise (Invalid_argument ("Unrecognized recur_rule_part " ^ p))
 
-and parse_freq = function
-  | "SECONDLY" -> `Secondly
-  | "MINUTELY" -> `Minutely
-  | "HOURLY" -> `Hourly
-  | "DAILY" -> `Daily
-  | "WEEKLY" -> `Weekly
-  | "MONTHLY" -> `Monthly
-  | "YEARLY" -> `Yearly
-  | s -> raise (Invalid_argument ("Unrecognized freq " ^ s))
-
-and parse_date d =
-  if String.length d = 8 then (* Date *)
-    Scanf.sscanf d "%4s%2s%2s" (fun y m d ->
-      Util_localtime.of_string (String.concat "-" [y; m; d])
-    )
-  else (* Date-Time *)
-    Scanf.sscanf d "%4s%2s%2sT%2s%2s%2s%s" (fun y mo d h mi s _z ->
-      Util_localtime.of_string (
-        String.concat "-" [y; mo; d] ^ "T" ^
-        String.concat ":" [h; mi; s]
-      )
-    )
-
-and parse_byseclist l = parse_int_list Icalendar_v.validate_seconds l
-
-and parse_byminlist l = parse_int_list Icalendar_v.validate_minutes l
-
-and parse_byhrlist l = parse_int_list Icalendar_v.validate_hour l
-
-and parse_weekdaynum s =
-  let ordwk_char = ['0'; '1'; '2'; '3'; '4'; '5'; '6';
-                    '7'; '8'; '9'; '0'; '+'; '-'] in
-  if List.exists (String.contains s) ordwk_char then
-    Scanf.sscanf s "%d%s" (fun n wday ->
-      let ordwk = check Icalendar_v.validate_ordwk n in
-      (Some ordwk, parse_weekday wday)
-    )
-  else (None, parse_weekday s)
-
-and parse_bywdaylist l = List.map parse_weekdaynum (String.nsplit l ~by:",")
-
-and parse_bymodaylist l = parse_int_list Icalendar_v.validate_ordmoday l
-
-and parse_byyrdaylist l = parse_int_list Icalendar_v.validate_ordyrday l
-
-and parse_bywknolist l = parse_int_list Icalendar_v.validate_weeknum l
-
-and parse_bymolist l = parse_int_list Icalendar_v.validate_monthnum l
-
-and parse_bysplist l = parse_int_list Icalendar_v.validate_setposday l
-
-and parse_weekday = function
-  | "SU" -> `Sunday
-  | "MO" -> `Monday
-  | "TU" -> `Tuesday
-  | "WE" -> `Wednesday
-  | "TH" -> `Thursday
-  | "FR" -> `Friday
-  | "SA" -> `Saturday
-  | s -> raise (Invalid_argument ("Unrecognized weekday " ^ s))
+let parse (rrule : string) : recur =
+  let parts =
+    if String.starts_with rrule "RRULE:"
+    then String.lchop rrule ~n:6
+    else rrule
+  in
+  List.map parse_recur_rule_part (String.nsplit parts ~by:";")
 
 let of_string = parse
 let wrap = parse
@@ -115,10 +115,41 @@ let wrap = parse
 
 (* Printing *)
 
-let rec print (rrule : recur) : string =
-  String.concat ";" (List.map print_recur_rule_part rrule)
+let print_int_list l =
+  String.concat "," (List.map (fun n -> string_of_int n) l)
 
-and print_recur_rule_part = function
+let print_freq = function
+  | `Secondly -> "SECONDLY"
+  | `Minutely -> "MINUTELY"
+  | `Hourly -> "HOURLY"
+  | `Daily -> "DAILY"
+  | `Weekly -> "WEEKLY"
+  | `Monthly -> "MONTHLY"
+  | `Yearly -> "YEARLY"
+
+let print_date d =
+  let open Util_localtime in
+  Printf.sprintf "%04d%02d%02dT%02d%02d%02dZ"
+    d.year d.month d.day d.hour d.min (int_of_float d.sec)
+
+let print_weekday = function
+  | `Sunday -> "SU"
+  | `Monday -> "MO"
+  | `Tuesday -> "TU"
+  | `Wednesday -> "WE"
+  | `Thursday -> "TH"
+  | `Friday -> "FR"
+  | `Saturday -> "SA"
+
+let print_bywdaylist l =
+  String.concat "," (
+    List.map (function
+      | (None, day) -> print_weekday day
+      | (Some ordwk, day) -> string_of_int ordwk ^ print_weekday day
+    ) l
+  )
+
+let print_recur_rule_part = function
   | `Freq f -> "FREQ=" ^ print_freq f
   | `Until d -> "UNTIL=" ^ print_date d
   | `Count n -> "COUNT=" ^ string_of_int n
@@ -134,43 +165,15 @@ and print_recur_rule_part = function
   | `Bysetpos l -> "BYSETPOS=" ^ print_int_list l
   | `Wkst day -> "WKST=" ^ print_weekday day
 
-and print_freq = function
-  | `Secondly -> "SECONDLY"
-  | `Minutely -> "MINUTELY"
-  | `Hourly -> "HOURLY"
-  | `Daily -> "DAILY"
-  | `Weekly -> "WEEKLY"
-  | `Monthly -> "MONTHLY"
-  | `Yearly -> "YEARLY"
-
-and print_date d =
-  let open Util_localtime in
-  Printf.sprintf "%04d%02d%02dT%02d%02d%02dZ"
-    d.year d.month d.day d.hour d.min (int_of_float d.sec)
-
-and print_bywdaylist l =
-  String.concat "," (
-    List.map (function
-      | (None, day) -> print_weekday day
-      | (Some ordwk, day) -> string_of_int ordwk ^ print_weekday day
-    ) l
-  )
-
-and print_weekday = function
-  | `Sunday -> "SU"
-  | `Monday -> "MO"
-  | `Tuesday -> "TU"
-  | `Wednesday -> "WE"
-  | `Thursday -> "TH"
-  | `Friday -> "FR"
-  | `Saturday -> "SA"
+let print (rrule : recur) : string =
+  "RRULE:" ^ String.concat ";" (List.map print_recur_rule_part rrule)
 
 let to_string = print
 let unwrap = print
 
 
 (* Human-readable descriptions of recurrences
-   e.g., "Every 3 weeks on Monday and Wednesday until Jan 3, 2015" *)
+   e.g., "Every 3 weeks on Monday and Wednesday, until Jan 3, 2015" *)
 
 exception Unsupported
   (* If you can't make this rule in our frontend interface,
@@ -179,7 +182,79 @@ exception Unsupported
      Our interface is modeled after Google's,
      so we're unlikely to encounter rules we can't summarize. *)
 
-let rec summarize_if_supported rule =
+let rec summarize_weekday = function
+  | (None, `Sunday) -> "Sunday"
+  | (None, `Monday) -> "Monday"
+  | (None, `Tuesday) -> "Tuesday"
+  | (None, `Wednesday) -> "Wednesday"
+  | (None, `Thursday) -> "Thursday"
+  | (None, `Friday) -> "Friday"
+  | (None, `Saturday) -> "Saturday"
+  | (Some n, day) ->
+      let ord =
+        match n with
+        | 1 -> "first"
+        | 2 -> "second"
+        | 3 -> "third"
+        | 4 -> "fourth"
+        | 5 -> "fifth"
+        | -1 -> "last"
+        | -2 -> "second-to-last"
+        | -3 -> "third-to-last"
+        | _ -> raise Unsupported
+      in
+      "the " ^ ord ^ " " ^ summarize_weekday (None, day)
+
+let has_all_weekdays l =
+  let weekdays = [
+    (None, `Monday);
+    (None, `Tuesday);
+    (None, `Wednesday);
+    (None, `Thursday);
+    (None, `Friday);
+  ] in
+  List.for_all (fun d -> List.mem d l) weekdays
+
+let summarize_weekdays = function
+  | [] -> assert false
+  | [day] -> summarize_weekday day
+  | [day1; day2] -> summarize_weekday day1 ^ " and " ^ summarize_weekday day2
+  | many_days ->
+      if has_all_weekdays many_days then "weekdays" else
+      let rev = List.rev many_days in
+      let last = List.hd rev in
+      let rest = List.rev (List.tl rev) in
+      String.concat ", " (List.map summarize_weekday rest)
+        ^ ", and " ^ summarize_weekday last
+
+let summarize_date d =
+  let open Util_localtime in
+  let months = [|"Jan"; "Feb"; "Mar"; "Apr"; "May"; "Jun";
+                 "Jul"; "Aug"; "Sep"; "Oct"; "Nov"; "Dec"|] in
+  Printf.sprintf "%s %d, %d" months.(d.month - 1) d.day d.year
+
+let extract_by_filter period rule =
+  let byxxx =
+    List.filter (function
+      | `Byhour _ | `Byday _ | `Bymonthday _ | `Byyearday _
+      | `Byweekno _ | `Bymonth _ | `Bysetpos _ ->
+          true
+      | `Wkst n when n <> `Sunday ->
+          (* Affects ByXXX, so considered one *)
+          true
+      | _ -> false
+    ) rule
+  in
+  match (period, byxxx) with
+  | (`Daily, []) -> `No_filter
+  | (`Weekly, []) -> `No_filter
+  | (`Weekly, [`Byday l]) -> `Byday l
+  | (`Monthly, [`Byday l]) -> `Byday l
+  | (`Monthly, [`Bymonthday l]) -> `Bymonthday l
+  | (`Yearly, []) -> `No_filter
+  | _ -> raise Unsupported
+
+let summarize_if_supported rule =
   let interval =
     try List.find_map (function `Interval i -> Some i | _ -> None) rule
     with Not_found -> 1
@@ -228,8 +303,8 @@ let rec summarize_if_supported rule =
     | _ -> assert false
   in
   let until =
-    try 
-      List.find_map (function 
+    try
+      List.find_map (function
         | `Until d -> Some (Some (summarize_date d))
         | _ -> None
       ) rule
@@ -253,74 +328,6 @@ let rec summarize_if_supported rule =
   in
   repeats ^ on ^ extent
 
-and extract_by_filter period rule =
-  let byxxx =
-    List.filter (function
-      | `Byhour _ | `Byday _ | `Bymonthday _ | `Byyearday _
-      | `Byweekno _ | `Bymonth _ | `Bysetpos _ | `Wkst _ ->
-          true (* Extract all the BYxxx parameters *)
-      | _ -> false
-    ) rule
-  in
-  match (period, byxxx) with
-  | (`Daily, []) -> `No_filter
-  | (`Weekly, []) -> `No_filter
-  | (`Weekly, [`Byday l]) -> `Byday l
-  | (`Monthly, [`Byday l]) -> `Byday l
-  | (`Monthly, [`Bymonthday l]) -> `Bymonthday l
-  | (`Yearly, []) -> `No_filter
-  | _ -> raise Unsupported
-
-and summarize_weekdays = function
-  | [] -> assert false
-  | [day] -> summarize_weekday day
-  | [day1; day2] -> summarize_weekday day1 ^ " and " ^ summarize_weekday day2
-  | many_days ->
-      if has_all_weekdays many_days then "weekdays" else
-      let rev = List.rev many_days in
-      let last = List.hd rev in
-      let rest = List.rev (List.tl rev) in
-      String.concat ", " (List.map summarize_weekday rest)
-        ^ ", and " ^ summarize_weekday last
-
-and summarize_weekday = function
-  | (None, `Sunday) -> "Sunday"
-  | (None, `Monday) -> "Monday"
-  | (None, `Tuesday) -> "Tuesday"
-  | (None, `Wednesday) -> "Wednesday"
-  | (None, `Thursday) -> "Thursday"
-  | (None, `Friday) -> "Friday"
-  | (None, `Saturday) -> "Saturday"
-  | (Some n, day) ->
-      let ord =
-        match n with
-        | 1 -> "first"
-        | 2 -> "second"
-        | 3 -> "third"
-        | 4 -> "fourth"
-        | 5 -> "fifth"
-        | -1 -> "last"
-        | -2 -> "second-to-last"
-        | _ -> raise Unsupported
-      in
-      "the " ^ ord ^ " " ^ summarize_weekday (None, day)
-
-and has_all_weekdays l =
-  let weekdays = [
-    (None, `Monday);
-    (None, `Tuesday);
-    (None, `Wednesday);
-    (None, `Thursday);
-    (None, `Friday);
-  ] in
-  List.for_all (fun d -> List.mem d l) weekdays
-
-and summarize_date d =
-  let open Util_localtime in
-  let months = [|"Jan"; "Feb"; "Mar"; "Apr"; "May"; "Jun";
-                 "Jul"; "Aug"; "Sep"; "Oct"; "Nov"; "Dec"|] in
-  Printf.sprintf "%s %d, %d" months.(d.month - 1) d.day d.year
-
 let summarize rule =
   try summarize_if_supported rule
   with Unsupported -> "Custom rule"
@@ -331,34 +338,34 @@ let summarize rule =
 module Test = struct
   type test_case = {
     printed : string; (* RECUR value in RFC format *)
-    parsed : recur;
+    parsed : recur; (* Expected result of parse function *)
     summarized : string; (* Human-readable description *)
   }
 
   (* Examples from RFC 5545 sec. 3.8.5.3. Recurrence Rule *)
   let examples = [
-    { printed = "FREQ=DAILY;COUNT=10";
+    { printed = "RRULE:FREQ=DAILY;COUNT=10";
       parsed = [`Freq `Daily; `Count 10];
       summarized = "Daily, 10 times" };
 
-    { printed = "FREQ=DAILY;UNTIL=19971224T000000Z";
+    { printed = "RRULE:FREQ=DAILY;UNTIL=19971224T000000Z";
       parsed = [`Freq `Daily; `Until (Util_localtime.of_float 882921600.)];
       summarized = "Daily, until Dec 24, 1997" };
 
-    { printed = "FREQ=DAILY;INTERVAL=2";
+    { printed = "RRULE:FREQ=DAILY;INTERVAL=2";
       parsed = [`Freq `Daily; `Interval 2];
       summarized = "Every 2 days" };
 
-    { printed = "FREQ=DAILY;INTERVAL=10;COUNT=5";
+    { printed = "RRULE:FREQ=DAILY;INTERVAL=10;COUNT=5";
       parsed = [`Freq `Daily; `Interval 10; `Count 5];
       summarized = "Every 10 days, 5 times" };
 
-    { printed = "FREQ=DAILY;UNTIL=20000131T140000Z;BYMONTH=1";
+    { printed = "RRULE:FREQ=DAILY;UNTIL=20000131T140000Z;BYMONTH=1";
       parsed = [`Freq `Daily; `Until (Util_localtime.of_float 949327200.);
                 `Bymonth [1]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=YEARLY;UNTIL=20000131T140000Z;BYMONTH=1;\
+    { printed = "RRULE:FREQ=YEARLY;UNTIL=20000131T140000Z;BYMONTH=1;\
                  BYDAY=SU,MO,TU,WE,TH,FR,SA";
       parsed = [`Freq `Yearly; `Until (Util_localtime.of_float 949327200.);
                 `Bymonth [1]; `Byday [(None, `Sunday); (None, `Monday);
@@ -367,29 +374,29 @@ module Test = struct
                                       (None, `Saturday)]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=WEEKLY;COUNT=10";
+    { printed = "RRULE:FREQ=WEEKLY;COUNT=10";
       parsed = [`Freq `Weekly; `Count 10];
       summarized = "Weekly, 10 times" };
 
-    { printed = "FREQ=WEEKLY;UNTIL=19971224T000000Z";
+    { printed = "RRULE:FREQ=WEEKLY;UNTIL=19971224T000000Z";
       parsed = [`Freq `Weekly; `Until (Util_localtime.of_float 882921600.)];
       summarized = "Weekly, until Dec 24, 1997" };
 
-    { printed = "FREQ=WEEKLY;INTERVAL=2;WKST=SU";
+    { printed = "RRULE:FREQ=WEEKLY;INTERVAL=2;WKST=SU";
       parsed = [`Freq `Weekly; `Interval 2; `Wkst `Sunday];
       summarized = "Every 2 weeks" };
 
-    { printed = "FREQ=WEEKLY;UNTIL=19971007T000000Z;WKST=SU;BYDAY=TU,TH";
+    { printed = "RRULE:FREQ=WEEKLY;UNTIL=19971007T000000Z;WKST=SU;BYDAY=TU,TH";
       parsed = [`Freq `Weekly; `Until (Util_localtime.of_float 876182400.);
                 `Wkst `Sunday; `Byday [(None, `Tuesday); (None, `Thursday)]];
       summarized = "Weekly on Tuesday and Thursday, until Oct 7, 1997" };
 
-    { printed = "FREQ=WEEKLY;COUNT=10;WKST=SU;BYDAY=TU,TH";
+    { printed = "RRULE:FREQ=WEEKLY;COUNT=10;WKST=SU;BYDAY=TU,TH";
       parsed = [`Freq `Weekly; `Count 10; `Wkst `Sunday;
                 `Byday [(None, `Tuesday); (None, `Thursday)]];
       summarized = "Weekly on Tuesday and Thursday, 10 times" };
 
-    { printed = "FREQ=WEEKLY;INTERVAL=2;UNTIL=19971224T000000Z;\
+    { printed = "RRULE:FREQ=WEEKLY;INTERVAL=2;UNTIL=19971224T000000Z;\
                  WKST=SU;BYDAY=MO,WE,FR";
       parsed = [`Freq `Weekly; `Interval 2;
                 `Until (Util_localtime.of_float 882921600.);
@@ -399,165 +406,170 @@ module Test = struct
       summarized = "Every 2 weeks on Monday, Wednesday, and Friday, \
                     until Dec 24, 1997" };
 
-    { printed = "FREQ=WEEKLY;INTERVAL=2;COUNT=8;WKST=SU;BYDAY=TU,TH";
+    { printed = "RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=8;WKST=SU;BYDAY=TU,TH";
       parsed = [`Freq `Weekly; `Interval 2; `Count 8; `Wkst `Sunday;
                 `Byday [(None, `Tuesday); (None, `Thursday)]];
       summarized = "Every 2 weeks on Tuesday and Thursday, 8 times" };
 
-    { printed = "FREQ=MONTHLY;COUNT=10;BYDAY=1FR";
+    { printed = "RRULE:FREQ=MONTHLY;COUNT=10;BYDAY=1FR";
       parsed = [`Freq `Monthly; `Count 10; `Byday [(Some 1, `Friday)]];
       summarized = "Monthly on the first Friday, 10 times" };
 
-    { printed = "FREQ=MONTHLY;UNTIL=19971224T000000Z;BYDAY=1FR";
+    { printed = "RRULE:FREQ=MONTHLY;UNTIL=19971224T000000Z;BYDAY=1FR";
       parsed = [`Freq `Monthly; `Until (Util_localtime.of_float 882921600.);
                 `Byday [(Some 1, `Friday)]];
       summarized = "Monthly on the first Friday, until Dec 24, 1997" };
 
-    { printed = "FREQ=MONTHLY;INTERVAL=2;COUNT=10;BYDAY=1SU,-1SU";
+    { printed = "RRULE:FREQ=MONTHLY;INTERVAL=2;COUNT=10;BYDAY=1SU,-1SU";
       parsed = [`Freq `Monthly; `Interval 2; `Count 10;
                 `Byday [(Some 1, `Sunday); (Some (-1), `Sunday)]];
       summarized = "Every 2 months on the first Sunday and the last Sunday, \
                     10 times" };
 
-    { printed = "FREQ=MONTHLY;COUNT=6;BYDAY=-2MO";
+    { printed = "RRULE:FREQ=MONTHLY;COUNT=6;BYDAY=-2MO";
       parsed = [`Freq `Monthly; `Count 6; `Byday [(Some (-2), `Monday)]];
       summarized = "Monthly on the second-to-last Monday, 6 times" };
 
-    { printed = "FREQ=MONTHLY;BYMONTHDAY=-3";
+    { printed = "RRULE:FREQ=MONTHLY;BYMONTHDAY=-3";
       parsed = [`Freq `Monthly; `Bymonthday [-3]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=MONTHLY;COUNT=10;BYMONTHDAY=2,15";
+    { printed = "RRULE:FREQ=MONTHLY;COUNT=10;BYMONTHDAY=2,15";
       parsed = [`Freq `Monthly; `Count 10; `Bymonthday [2; 15]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=MONTHLY;COUNT=10;BYMONTHDAY=1,-1";
+    { printed = "RRULE:FREQ=MONTHLY;COUNT=10;BYMONTHDAY=1,-1";
       parsed = [`Freq `Monthly; `Count 10; `Bymonthday [1; -1]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=MONTHLY;INTERVAL=18;COUNT=10;\
+    { printed = "RRULE:FREQ=MONTHLY;INTERVAL=18;COUNT=10;\
                  BYMONTHDAY=10,11,12,13,14,15";
       parsed = [`Freq `Monthly; `Interval 18; `Count 10;
                 `Bymonthday [10; 11; 12; 13; 14; 15]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=MONTHLY;INTERVAL=2;BYDAY=TU";
+    { printed = "RRULE:FREQ=MONTHLY;INTERVAL=2;BYDAY=TU";
       parsed = [`Freq `Monthly; `Interval 2; `Byday [(None, `Tuesday)]];
       summarized = "Every 2 months on Tuesday" };
 
-    { printed = "FREQ=YEARLY;COUNT=10;BYMONTH=6,7";
+    { printed = "RRULE:FREQ=YEARLY;COUNT=10;BYMONTH=6,7";
       parsed = [`Freq `Yearly; `Count 10; `Bymonth [6; 7]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=YEARLY;INTERVAL=2;COUNT=10;BYMONTH=1,2,3";
+    { printed = "RRULE:FREQ=YEARLY;INTERVAL=2;COUNT=10;BYMONTH=1,2,3";
       parsed = [`Freq `Yearly; `Interval 2; `Count 10; `Bymonth [1; 2; 3]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=YEARLY;INTERVAL=3;COUNT=10;BYYEARDAY=1,100,200";
+    { printed = "RRULE:FREQ=YEARLY;INTERVAL=3;COUNT=10;BYYEARDAY=1,100,200";
       parsed = [`Freq `Yearly; `Interval 3; `Count 10;
                 `Byyearday [1; 100; 200]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=YEARLY;BYDAY=20MO";
+    { printed = "RRULE:FREQ=YEARLY;BYDAY=20MO";
       parsed = [`Freq `Yearly; `Byday [(Some 20, `Monday)]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=YEARLY;BYWEEKNO=20;BYDAY=MO";
+    { printed = "RRULE:FREQ=YEARLY;BYWEEKNO=20;BYDAY=MO";
       parsed = [`Freq `Yearly; `Byweekno [20]; `Byday [(None, `Monday)]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=YEARLY;BYMONTH=3;BYDAY=TH";
+    { printed = "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=TH";
       parsed = [`Freq `Yearly; `Bymonth [3]; `Byday [(None, `Thursday)]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=YEARLY;BYDAY=TH;BYMONTH=6,7,8";
+    { printed = "RRULE:FREQ=YEARLY;BYDAY=TH;BYMONTH=6,7,8";
       parsed = [`Freq `Yearly; `Byday [(None, `Thursday)];
                 `Bymonth [6; 7; 8]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=MONTHLY;BYDAY=FR;BYMONTHDAY=13";
+    { printed = "RRULE:FREQ=MONTHLY;BYDAY=FR;BYMONTHDAY=13";
       parsed = [`Freq `Monthly; `Byday [(None, `Friday)]; `Bymonthday [13]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=MONTHLY;BYDAY=SA;BYMONTHDAY=7,8,9,10,11,12,13";
+    { printed = "RRULE:FREQ=MONTHLY;BYDAY=SA;BYMONTHDAY=7,8,9,10,11,12,13";
       parsed = [`Freq `Monthly; `Byday [(None, `Saturday)];
                 `Bymonthday [7; 8; 9; 10; 11; 12; 13]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=YEARLY;INTERVAL=4;BYMONTH=11;BYDAY=TU;\
+    { printed = "RRULE:FREQ=YEARLY;INTERVAL=4;BYMONTH=11;BYDAY=TU;\
                BYMONTHDAY=2,3,4,5,6,7,8";
       parsed = [`Freq `Yearly; `Interval 4; `Bymonth [11];
                 `Byday [(None, `Tuesday)];
                 `Bymonthday [2; 3; 4; 5; 6; 7; 8]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=MONTHLY;COUNT=3;BYDAY=TU,WE,TH;BYSETPOS=3";
+    { printed = "RRULE:FREQ=MONTHLY;COUNT=3;BYDAY=TU,WE,TH;BYSETPOS=3";
       parsed = [`Freq `Monthly; `Count 3;
                 `Byday [(None, `Tuesday); (None, `Wednesday);
                         (None, `Thursday)];
                 `Bysetpos [3]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-2";
+    { printed = "RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-2";
       parsed = [`Freq `Monthly; `Byday [(None, `Monday); (None, `Tuesday);
                                         (None, `Wednesday); (None, `Thursday);
                                         (None, `Friday)];
                 `Bysetpos [-2]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=HOURLY;INTERVAL=3;UNTIL=19970902T170000Z";
+    { printed = "RRULE:FREQ=HOURLY;INTERVAL=3;UNTIL=19970902T170000Z";
       parsed = [`Freq `Hourly; `Interval 3;
                 `Until (Util_localtime.of_float 873219600.)];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=MINUTELY;INTERVAL=15;COUNT=6";
+    { printed = "RRULE:FREQ=MINUTELY;INTERVAL=15;COUNT=6";
       parsed = [`Freq `Minutely; `Interval 15; `Count 6];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=MINUTELY;INTERVAL=90;COUNT=4";
+    { printed = "RRULE:FREQ=MINUTELY;INTERVAL=90;COUNT=4";
       parsed = [`Freq `Minutely; `Interval 90; `Count 4];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=DAILY;BYHOUR=9,10,11,12,13,14,15,16;BYMINUTE=0,20,40";
+    { printed = "RRULE:FREQ=DAILY;BYHOUR=9,10,11,12,13,14,15,16;\
+                 BYMINUTE=0,20,40";
       parsed = [`Freq `Daily; `Byhour [9; 10; 11; 12; 13; 14; 15; 16];
                 `Byminute [0; 20; 40]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=MINUTELY;INTERVAL=20;BYHOUR=9,10,11,12,13,14,15,16";
+    { printed = "RRULE:FREQ=MINUTELY;INTERVAL=20;\
+                 BYHOUR=9,10,11,12,13,14,15,16";
       parsed = [`Freq `Minutely; `Interval 20;
                 `Byhour [9; 10; 11; 12; 13; 14; 15; 16]];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=WEEKLY;INTERVAL=2;COUNT=4;BYDAY=TU,SU;WKST=MO";
-      parsed = [`Freq `Weekly; `Interval 2; `Count 4;
+    { printed = "RRULE:FREQ=WEEKLY;INTERVAL=3;COUNT=4;BYDAY=TU,SU;WKST=MO";
+      parsed = [`Freq `Weekly; `Interval 3; `Count 4;
                 `Byday [(None, `Tuesday); (None, `Sunday)]; `Wkst `Monday];
       summarized = "Custom rule" };
 
-    { printed = "FREQ=WEEKLY;INTERVAL=2;COUNT=4;BYDAY=TU,SU;WKST=SU";
+    { printed = "RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=4;BYDAY=TU,SU;WKST=SU";
       parsed = [`Freq `Weekly; `Interval 2; `Count 4;
                 `Byday [(None, `Tuesday); (None, `Sunday)]; `Wkst `Sunday];
-      summarized = "Custom rule" };
+      summarized = "Every 2 weeks on Tuesday and Sunday, 4 times" };
 
-    { printed = "FREQ=MONTHLY;BYMONTHDAY=15,30;COUNT=5";
+    { printed = "RRULE:FREQ=MONTHLY;BYMONTHDAY=15,30;COUNT=5";
       parsed = [`Freq `Monthly; `Bymonthday [15; 30]; `Count 5];
       summarized = "Custom rule" };
   ]
 
   let test_parsing () =
     List.iter (fun { printed; parsed } ->
-      assert (parse printed = parsed)
+      try assert (parse printed = parsed)
+      with e -> logf `Error "Wrong parsed value for %s" printed; raise e
     ) examples;
     true
 
   let test_printing () =
     List.iter (fun { printed; parsed } ->
-      assert (print parsed = printed)
+      try assert (print parsed = printed)
+      with e -> logf `Error "Wrong printed output for %s" printed; raise e
     ) examples;
     true
 
   let test_summarizing () =
-    List.iter (fun { parsed; summarized } ->
-      assert (summarize parsed = summarized)
+    List.iter (fun { printed; parsed; summarized } ->
+      try assert (summarize parsed = summarized)
+      with e -> logf `Error "Wrong summary for %s" printed; raise e
     ) examples;
     true
 
