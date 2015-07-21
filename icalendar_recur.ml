@@ -6,8 +6,7 @@ open Log
 let check f x =
   match f [] x with
   | None -> x
-  | Some err ->
-      raise (Invalid_argument (Ag_util.Validation.string_of_error err))
+  | Some err -> invalid_arg (Ag_util.Validation.string_of_error err)
 
 
 (* Parsing *)
@@ -30,7 +29,7 @@ let parse_freq = function
   | "WEEKLY" -> `Weekly
   | "MONTHLY" -> `Monthly
   | "YEARLY" -> `Yearly
-  | s -> raise (Invalid_argument ("Unrecognized freq " ^ s))
+  | s -> invalid_arg ("Unrecognized freq " ^ s)
 
 let parse_date d =
   if String.length d = 8 then (* Date *)
@@ -53,7 +52,7 @@ let parse_weekday = function
   | "TH" -> `Thursday
   | "FR" -> `Friday
   | "SA" -> `Saturday
-  | s -> raise (Invalid_argument ("Unrecognized weekday " ^ s))
+  | s -> invalid_arg ("Unrecognized weekday " ^ s)
 
 let parse_byseclist l = parse_int_list Icalendar_v.validate_seconds l
 
@@ -83,31 +82,102 @@ let parse_bymolist l = parse_int_list Icalendar_v.validate_monthnum l
 
 let parse_bysplist l = parse_int_list Icalendar_v.validate_setposday l
 
-let parse_recur_rule_part p =
-  match String.split p ~by:"=" with
-  | ("FREQ", f) -> `Freq (parse_freq f)
-  | ("UNTIL", d) -> `Until (parse_date d)
-  | ("COUNT", n) -> `Count (positive_int_of_string n)
-  | ("INTERVAL", n) -> `Interval (positive_int_of_string n)
-  | ("BYSECOND", l) -> `Bysecond (parse_byseclist l)
-  | ("BYMINUTE", l) -> `Byminute (parse_byminlist l)
-  | ("BYHOUR", l) -> `Byhour (parse_byhrlist l)
-  | ("BYDAY", l) -> `Byday (parse_bywdaylist l)
-  | ("BYMONTHDAY", l) -> `Bymonthday (parse_bymodaylist l)
-  | ("BYYEARDAY", l) -> `Byyearday (parse_byyrdaylist l)
-  | ("BYWEEKNO", l) -> `Byweekno (parse_bywknolist l)
-  | ("BYMONTH", l) -> `Bymonth (parse_bymolist l)
-  | ("BYSETPOS", l) -> `Bysetpos (parse_bysplist l)
-  | ("WKST", day) -> `Wkst (parse_weekday day)
-  | _ -> raise (Invalid_argument ("Unrecognized recur_rule_part " ^ p))
-
-let parse (rrule : string) : recur_rule_part list =
-  let parts =
-    if String.starts_with rrule "RRULE:"
-    then String.lchop rrule ~n:6
-    else ""
+let parse_rrule (rrule : string) : recur =
+  let parts = String.nsplit rrule ~by:";" in
+  let is_freq p =
+    match String.split p ~by:"=" with
+    | ("FREQ", _) -> true
+    | _ -> false
   in
-  List.map parse_recur_rule_part (String.nsplit parts ~by:";")
+  let (freq, others) =
+    match List.partition is_freq parts with
+    | ([], _) -> invalid_arg ("Missing FREQ in " ^ rrule)
+    | ([f], rest) -> 
+        let freq = snd (String.split f ~by:"=") in
+        (parse_freq freq, rest)
+    | (fs, _) -> invalid_arg ("Multiple FREQs in " ^ rrule)
+  in
+  let recur = Icalendar_v.create_recur ~freq () in
+  let error param =
+    invalid_arg ("Multiple " ^ param ^ "s in " ^ rrule)
+  in
+  List.fold_left (fun accu part ->
+    let (k, v) = String.split part ~by:"=" in
+    match (k, v) with
+    | ("FREQ", f) -> assert false
+    | ("UNTIL", d) ->
+        if accu.until = None && accu.count = None then
+          { accu with until = Some (parse_date d) }
+        else if accu.until = None then
+          invalid_arg ("Both UNTIL and COUNT given in " ^ rrule)
+        else error k
+    | ("COUNT", n) ->
+        if accu.count = None && accu.until = None then
+          { accu with count = Some (positive_int_of_string n) }
+        else if accu.count = None then
+          invalid_arg ("Both COUNT and UNTIL given in " ^ rrule)
+        else error k
+    | ("INTERVAL", n) ->
+        if accu.interval = None then
+          { accu with interval = Some (positive_int_of_string n) }
+        else error k
+    | ("BYSECOND", l) ->
+        if accu.bysecond = [] then
+          { accu with bysecond = parse_byseclist l }
+        else error k
+    | ("BYMINUTE", l) ->
+        if accu.byminute = [] then
+          { accu with byminute = parse_byminlist l }
+        else error k
+    | ("BYHOUR", l) ->
+        if accu.byhour = [] then
+          { accu with byhour = parse_byhrlist l }
+        else error k
+    | ("BYDAY", l) ->
+        if accu.byday = [] then
+          { accu with byday = parse_bywdaylist l }
+        else error k
+    | ("BYMONTHDAY", l) ->
+        if accu.bymonthday = [] then
+          { accu with bymonthday = parse_bymodaylist l }
+        else error k
+    | ("BYYEARDAY", l) ->
+        if accu.byyearday = [] then
+          { accu with byyearday = parse_byyrdaylist l }
+        else error k
+    | ("BYWEEKNO", l) ->
+        if accu.byweekno = [] then
+          { accu with byweekno = parse_bywknolist l }
+        else error k
+    | ("BYMONTH", l) ->
+        if accu.bymonth = [] then
+          { accu with bymonth = parse_bymolist l }
+        else error k
+    | ("BYSETPOS", l) ->
+        if accu.bysetpos = [] then
+          { accu with bysetpos = parse_bysplist l }
+        else error k
+    | ("WKST", day) ->
+        if accu.wkst = None then
+          { accu with wkst = Some (parse_weekday day) }
+        else error k
+    | _ -> invalid_arg ("Unrecognized RRULE part " ^ part)
+  ) recur others
+
+let parse (rules : string list) : recurrence list =
+  List.filter_map (fun rule ->
+    if String.starts_with rule "RRULE:" then
+      let parts = String.lchop rule ~n:6 in
+      Some (`Rrule (parse_rrule parts))
+    else if String.starts_with rule "EXDATE:" then
+      let s = String.lchop rule ~n:7 in
+      Some (`Exdate s)
+    else if String.starts_with rule "RDATE:" then
+      let s = String.lchop rule ~n:6 in
+      Some (`Rdate s)
+    else
+      None
+  ) rules
 
 
 (* Printing *)
@@ -146,24 +216,79 @@ let print_bywdaylist l =
     ) l
   )
 
-let print_recur_rule_part = function
-  | `Freq f -> "FREQ=" ^ print_freq f
-  | `Until d -> "UNTIL=" ^ print_date d
-  | `Count n -> "COUNT=" ^ string_of_int n
-  | `Interval n -> "INTERVAL=" ^ string_of_int n
-  | `Bysecond l -> "BYSECOND=" ^ print_int_list l
-  | `Byminute l -> "BYMINUTE=" ^ print_int_list l
-  | `Byhour l -> "BYHOUR=" ^ print_int_list l
-  | `Byday l -> "BYDAY=" ^ print_bywdaylist l
-  | `Bymonthday l -> "BYMONTHDAY=" ^ print_int_list l
-  | `Byyearday l -> "BYYEARDAY=" ^ print_int_list l
-  | `Byweekno l -> "BYWEEKNO=" ^ print_int_list l
-  | `Bymonth l -> "BYMONTH=" ^ print_int_list l
-  | `Bysetpos l -> "BYSETPOS=" ^ print_int_list l
-  | `Wkst day -> "WKST=" ^ print_weekday day
+let print_rrule (recur : recur) : string =
+  let rule = "FREQ=" ^ print_freq recur.freq in
+  let rule =
+    match (recur.until, recur.count) with
+    | (None, None) -> rule
+    | (Some d, None) -> rule ^ ";UNTIL=" ^ print_date d
+    | (None, Some n) -> rule ^ ";COUNT=" ^ string_of_int n
+    | _ -> invalid_arg ("Both COUNT and UNTIL given in " ^
+                        Icalendar_j.string_of_recur recur)
+  in
+  let rule =
+    match recur.interval with
+    | None -> rule
+    | Some n -> rule ^ ";INTERVAL=" ^ string_of_int n
+  in
+  let rule =
+    match recur.bysecond with
+    | [] -> rule
+    | l -> rule ^ ";BYSECOND=" ^ print_int_list l
+  in
+  let rule =
+    match recur.byminute with
+    | [] -> rule
+    | l -> rule ^ ";BYMINUTE=" ^ print_int_list l
+  in
+  let rule =
+    match recur.byhour with
+    | [] -> rule
+    | l -> rule ^ ";BYHOUR=" ^ print_int_list l
+  in
+  let rule =
+    match recur.byday with
+    | [] -> rule
+    | l -> rule ^ ";BYDAY=" ^ print_bywdaylist l
+  in
+  let rule =
+    match recur.bymonthday with
+    | [] -> rule
+    | l -> rule ^ ";BYMONTHDAY=" ^ print_int_list l
+  in
+  let rule =
+    match recur.byyearday with
+    | [] -> rule
+    | l -> rule ^ ";BYYEARDAY=" ^ print_int_list l
+  in
+  let rule =
+    match recur.byweekno with
+    | [] -> rule
+    | l -> rule ^ ";BYWEEKNO=" ^ print_int_list l
+  in
+  let rule =
+    match recur.bymonth with
+    | [] -> rule
+    | l -> rule ^ ";BYMONTH=" ^ print_int_list l
+  in
+  let rule =
+    match recur.bysetpos with
+    | [] -> rule
+    | l -> rule ^ ";BYSETPOS=" ^ print_int_list l
+  in
+  let rule =
+    match recur.wkst with
+    | None -> rule
+    | Some day -> ";WKST=" ^ print_weekday day
+  in
+  rule
 
-let print (rrule : recur_rule_part list) : string =
-  "RRULE:" ^ String.concat ";" (List.map print_recur_rule_part rrule)
+let print (rules : recurrence list) : string list =
+  List.map (function
+    | `Rrule recur -> "RRULE:" ^ print_rrule recur
+    | `Exdate s -> "EXDATE:" ^ s
+    | `Rdate s -> "RDATE:" ^ s
+  ) rules
 
 
 (* Human-readable descriptions of recurrences
@@ -255,7 +380,7 @@ let summarize_if_supported rule =
   in
   let period =
     try List.find_map (function `Freq f -> Some f | _ -> None) rule
-    with Not_found -> raise (Failure ("Missing FREQ in " ^ print rule))
+    with Not_found -> raise (Failure ("Missing FREQ in " ^ print_rrule rule))
   in
   let repeats =
     match (interval, period) with
@@ -318,124 +443,15 @@ let summarize_if_supported rule =
     | (Some date, None) -> ", until " ^ date
     | (None, Some occurrences) -> ", " ^ occurrences ^ " times"
     | (Some _, Some _) ->
-        raise (Failure ("Both UNTIL and COUNT are given in " ^ print rule))
+        raise (Failure (
+          "Both UNTIL and COUNT are given in " ^ print_rrule rule
+        ))
   in
   repeats ^ on ^ extent
 
 let summarize (rule : recur_rule_part list) : string =
   try summarize_if_supported rule
   with Unsupported -> "Custom rule"
-
-
-(* More JS-friendly format *)
-
-let js_recur_of_parts (rule : recur_rule_part list) : js_recur =
-  let is_freq = function `Freq _ -> true | _ -> false in
-  let (freq, others) =
-    match List.partition is_freq rule with
-    | ([], _) ->
-        raise (Failure ("Missing FREQ in " ^ print rule))
-    | ([f], rest) ->
-        (match f with `Freq freq -> (freq, rest) | _ -> assert false)
-    | (fs, _) ->
-        raise (Failure ("Multiple FREQs in " ^ print rule))
-  in
-  let init = Icalendar_v.create_js_recur ~freq () in
-  List.fold_left (fun accu -> function
-    | `Freq _ -> assert false
-    | `Until d ->
-        if accu.until = None && accu.count = None then
-          { accu with until = Some d }
-        else if accu.until = None then
-          raise (Failure ("Both UNTIL and COUNT given in " ^ print rule))
-        else
-          raise (Failure ("Multiple UNTILs in " ^ print rule))
-    | `Count n ->
-        if accu.count = None && accu.until = None then
-          { accu with count = Some n }
-        else if accu.count = None then
-          raise (Failure ("Both COUNT and UNTIL given in " ^ print rule))
-        else
-          raise (Failure ("Multiple COUNTs in " ^ print rule))
-    | `Interval n ->
-        if accu.interval = None then { accu with interval = Some n }
-        else raise (Failure ("Multiple INTERVALs in " ^ print rule))
-    | `Bysecond l ->
-        if accu.bysecond = [] then { accu with bysecond = l }
-        else raise (Failure ("Multiple BYSECONDs in " ^ print rule))
-    | `Byminute l ->
-        if accu.byminute = [] then { accu with byminute = l }
-        else raise (Failure ("Multiple BYMINUTEs in " ^ print rule))
-    | `Byhour l ->
-        if accu.byhour = [] then { accu with byhour = l }
-        else raise (Failure ("Multiple BYHOURs in " ^ print rule))
-    | `Byday l ->
-        if accu.byday = [] then { accu with byday = l }
-        else raise (Failure ("Multiple BYDAYs in " ^ print rule))
-    | `Bymonthday l ->
-        if accu.bymonthday = [] then { accu with bymonthday = l }
-        else raise (Failure ("Multiple BYMONTHDAYs in " ^ print rule))
-    | `Byyearday l ->
-        if accu.byyearday = [] then { accu with byyearday = l }
-        else raise (Failure ("Multiple BYYEARDAYs in " ^ print rule))
-    | `Byweekno l ->
-        if accu.byweekno = [] then { accu with byweekno = l }
-        else raise (Failure ("Multiple BYWEEKNOs in " ^ print rule))
-    | `Bymonth l ->
-        if accu.bymonth = [] then { accu with bymonth = l }
-        else raise (Failure ("Multiple BYMONTHs in " ^ print rule))
-    | `Bysetpos l ->
-        if accu.bysetpos = [] then { accu with bysetpos = l }
-        else raise (Failure ("Multiple BYSETPOSs in " ^ print rule))
-    | `Wkst day ->
-        if accu.wkst = None then { accu with wkst = Some day }
-        else raise (Failure ("Multiple WKSTs in " ^ print rule))
-  ) init others
-
-let parts_of_js_recur (js_rule : js_recur) : recur_rule_part list  =
-  let rule = [`Freq js_rule.freq] in
-  let rule =
-    match (js_rule.until, js_rule.count) with
-    | (None, None) -> rule
-    | (Some n, None) -> `Until n :: rule
-    | (None, Some n) -> `Count n :: rule
-    | _ -> raise (Failure ("Both COUNT and UNTIL given in " ^
-                            Icalendar_j.string_of_js_recur js_rule))
-  in
-  let rule =
-    match js_rule.interval with None -> rule | Some n -> `Interval n :: rule
-  in
-  let rule =
-    match js_rule.bysecond with [] -> rule | l -> `Bysecond l :: rule
-  in
-  let rule =
-    match js_rule.byminute with [] -> rule | l -> `Byminute l :: rule
-  in
-  let rule =
-    match js_rule.byhour with [] -> rule | l -> `Byhour l :: rule
-  in
-  let rule =
-    match js_rule.byday with [] -> rule | l -> `Byday l :: rule
-  in
-  let rule =
-    match js_rule.bymonthday with [] -> rule | l -> `Bymonthday l :: rule
-  in
-  let rule =
-    match js_rule.byyearday with [] -> rule | l -> `Byyearday l :: rule
-  in
-  let rule =
-    match js_rule.byweekno with [] -> rule | l -> `Byweekno l :: rule
-  in
-  let rule =
-    match js_rule.bymonth with [] -> rule | l -> `Bymonth l :: rule
-  in
-  let rule =
-    match js_rule.bysetpos with [] -> rule | l -> `Bysetpos l :: rule
-  in
-  let rule =
-    match js_rule.wkst with None -> rule | Some day -> `Wkst day :: rule
-  in
-  List.rev rule
 
 
 (* Tests *)
@@ -659,14 +675,14 @@ module Test = struct
 
   let test_parsing () =
     List.iter (fun { printed; parsed } ->
-      try assert (parse printed = parsed)
+      try assert (parse [printed] = [`Rrule parsed])
       with e -> logf `Error "Wrong parsed value for %s" printed; raise e
     ) examples;
     true
 
   let test_printing () =
     List.iter (fun { printed; parsed } ->
-      try assert (print parsed = printed)
+      try assert (print [`Rrule parsed] = [printed])
       with e -> logf `Error "Wrong printed output for %s" printed; raise e
     ) examples;
     true
