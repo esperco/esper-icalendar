@@ -105,7 +105,7 @@ let parse (rrule : string) : recur_rule_part list =
   let parts =
     if String.starts_with rrule "RRULE:"
     then String.lchop rrule ~n:6
-    else rrule
+    else ""
   in
   List.map parse_recur_rule_part (String.nsplit parts ~by:";")
 
