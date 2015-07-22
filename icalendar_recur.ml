@@ -186,18 +186,21 @@ let parse_rrule (rrule : string) : recur =
     | _ -> invalid_arg ("Unrecognized RRULE part " ^ part)
   ) recur others
 
-let parse (rule : string) : recurrence =
-  if String.starts_with rule "RRULE:" then
-    let parts = String.lchop rule ~n:6 in
-    `Rrule (parse_rrule parts)
-  else if String.starts_with rule "EXDATE:" then
-    let s = String.lchop rule ~n:7 in
-    `Exdate s
-  else if String.starts_with rule "RDATE:" then
-    let s = String.lchop rule ~n:6 in
-    `Rdate s
-  else
-    invalid_arg ("Unrecognized recurrence component: " ^ rule)
+let parse (rules : string list) : recurrence =
+  let recurrence = Icalendar_v.create_recurrence () in
+  List.fold_right (fun rule accu ->
+    if String.starts_with rule "RRULE:" then
+      let parts = String.lchop rule ~n:6 in
+      { accu with rrule = parse_rrule parts :: accu.rrule }
+    else if String.starts_with rule "EXDATE:" then
+      let s = String.lchop rule ~n:7 in
+      { accu with exdate = s :: accu.exdate }
+    else if String.starts_with rule "RDATE:" then
+      let s = String.lchop rule ~n:6 in
+      { accu with rdate = s :: accu.rdate }
+    else
+      invalid_arg ("Unrecognized recurrence component: " ^ rule)
+  ) rules recurrence
 
 
 (* Printing *)
@@ -303,11 +306,10 @@ let print_rrule (recur : recur) : string =
   in
   rule
 
-let print (rule : recurrence) : string =
-  match rule with
-    | `Rrule recur -> "RRULE:" ^ print_rrule recur
-    | `Exdate s -> "EXDATE:" ^ s
-    | `Rdate s -> "RDATE:" ^ s
+let print (rules : recurrence) : string list =
+  List.map (fun recur -> "RRULE:" ^ print_rrule recur) rules.rrule
+    @ List.map (fun s -> "EXDATE:" ^ s) rules.exdate
+    @ List.map (fun s -> "RDATE:" ^ s) rules.rdate
 
 
 (* Human-readable descriptions of recurrences
@@ -382,8 +384,11 @@ let extract_by_filter period rule =
     rule.bysetpos;
   ] in
   let no_filter =
-    List.for_all (( = ) []) (List.map (fun _ -> 0) rule.byday :: rule.bymonthday :: other_filters)
-    && (rule.wkst = None || rule.wkst = Some `Sunday)
+    List.for_all (( = ) []) (
+      List.map (fun _ -> 0) rule.byday
+        :: rule.bymonthday
+        :: other_filters
+    ) && (rule.wkst = None || rule.wkst = Some `Sunday)
   in
   let just_byday =
     if List.for_all (( = ) []) (rule.bymonthday :: other_filters)
@@ -392,8 +397,9 @@ let extract_by_filter period rule =
     then Some rule.byday else None
   in
   let just_bymonthday =
-    if List.for_all (( = ) []) (List.map (fun _ -> 0) rule.byday :: other_filters)
-    && rule.bymonthday <> []
+    if List.for_all (( = ) []) (
+      List.map (fun _ -> 0) rule.byday :: other_filters
+    ) && rule.bymonthday <> []
     && (rule.wkst = None || rule.wkst = Some `Sunday)
     then Some rule.bymonthday else None
   in
@@ -705,14 +711,20 @@ module Test = struct
 
   let test_parsing () =
     List.iter (fun { printed; parsed } ->
-      try assert (parse printed = `Rrule parsed)
+      let expected = Icalendar_v.create_recurrence ~rrule:[parsed] () in
+      try assert (parse [printed] = expected)
       with e -> logf `Error "Wrong parsed value for %s" printed; raise e
     ) examples;
     true
 
   let test_printing () =
     List.iter (fun { printed; parsed } ->
-      let output = print (`Rrule parsed) in
+      let output =
+        try List.hd (print (Icalendar_v.create_recurrence ~rrule:[parsed] ()))
+        with Failure _ ->
+          logf `Error "No printed output for rule %s" printed;
+          assert false
+      in
       let output_parts = String.(nsplit (lchop output ~n:6) ~by:";") in
       let expected_parts = String.(nsplit (lchop printed ~n:6) ~by:";") in
       try
