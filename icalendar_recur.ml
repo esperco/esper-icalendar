@@ -191,11 +191,19 @@ let try_parse rule accu =
     let (_, parts) = String.split rule ~by:":" in
     { accu with rrule = parse_rrule parts :: accu.rrule }
   else if String.starts_with rule "EXDATE" then
-    let (_, s) = String.split rule ~by:":" in
-    { accu with exdate = s :: accu.exdate }
+    let (before, after) = String.split rule ~by:":" in
+    let param =
+      if before = "EXDATE" then None
+      else Some (String.lchop before ~n:7)
+    in
+    { accu with exdate = (param, after) :: accu.exdate }
   else if String.starts_with rule "RDATE" then
-    let (_, s) = String.split rule ~by:":" in
-    { accu with rdate = s :: accu.rdate }
+    let (before, after) = String.split rule ~by:":" in
+    let param =
+      if before = "RDATE" then None
+      else Some (String.lchop before ~n:6)
+    in
+    { accu with rdate = (param, after) :: accu.rdate }
   else
     invalid_arg ("Unrecognized recurrence component: " ^ rule)
 
@@ -315,10 +323,15 @@ let print_rrule (recur : recur) : string =
   in
   rule
 
+let print_date_rule name (param, date_rule) =
+  match param with
+  | None -> name ^ ":" ^ date_rule
+  | Some p -> name ^ ";" ^ p ^ ":" ^ date_rule
+
 let print (rules : recurrence) : string list =
   List.map (fun recur -> "RRULE:" ^ print_rrule recur) rules.rrule
-    @ List.map (fun s -> "EXDATE:" ^ s) rules.exdate
-    @ List.map (fun s -> "RDATE:" ^ s) rules.rdate
+    @ List.map (print_date_rule "EXDATE") rules.exdate
+    @ List.map (print_date_rule "RDATE") rules.rdate
 
 
 (* Human-readable descriptions of recurrences
