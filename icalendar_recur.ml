@@ -186,22 +186,31 @@ let parse_rrule (rrule : string) : recur =
     | _ -> invalid_arg ("Unrecognized RRULE part " ^ part)
   ) recur others
 
+let try_parse rule accu =
+  if String.starts_with rule "RRULE" then
+    let (_, parts) = String.split rule ~by:":" in
+    { accu with rrule = parse_rrule parts :: accu.rrule }
+  else if String.starts_with rule "EXDATE" then
+    let (_, s) = String.split rule ~by:":" in
+    { accu with exdate = s :: accu.exdate }
+  else if String.starts_with rule "RDATE" then
+    let (_, s) = String.split rule ~by:":" in
+    { accu with rdate = s :: accu.rdate }
+  else
+    invalid_arg ("Unrecognized recurrence component: " ^ rule)
+
 let parse (rules : string list) : recurrence =
   let recurrence = Icalendar_v.create_recurrence () in
   List.fold_right (fun rule accu ->
-    if String.starts_with rule "RRULE" then
-      let (_, parts) = String.split rule ~by:":" in
-      { accu with rrule = parse_rrule parts :: accu.rrule }
-    else if String.starts_with rule "EXDATE" then
-      let (_, s) = String.split rule ~by:":" in
-      { accu with exdate = s :: accu.exdate }
-    else if String.starts_with rule "RDATE" then
-      let (_, s) = String.split rule ~by:":" in
-      { accu with rdate = s :: accu.rdate }
-    else
-      invalid_arg ("Unrecognized recurrence component: " ^ rule)
+    try try_parse rule accu
+    with e ->
+      let err =
+        Printexc.to_string e
+          ^ " raised during parsing of recurrence rule "
+          ^ rule
+      in
+      invalid_arg err
   ) rules recurrence
-
 
 (* Printing *)
 
