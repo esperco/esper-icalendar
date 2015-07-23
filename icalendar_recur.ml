@@ -189,14 +189,14 @@ let parse_rrule (rrule : string) : recur =
 let parse (rules : string list) : recurrence =
   let recurrence = Icalendar_v.create_recurrence () in
   List.fold_right (fun rule accu ->
-    if String.starts_with rule "RRULE:" then
-      let parts = String.lchop rule ~n:6 in
+    if String.starts_with rule "RRULE" then
+      let (_, parts) = String.split rule ~by:":" in
       { accu with rrule = parse_rrule parts :: accu.rrule }
-    else if String.starts_with rule "EXDATE:" then
-      let s = String.lchop rule ~n:7 in
+    else if String.starts_with rule "EXDATE" then
+      let (_, s) = String.split rule ~by:":" in
       { accu with exdate = s :: accu.exdate }
-    else if String.starts_with rule "RDATE:" then
-      let s = String.lchop rule ~n:6 in
+    else if String.starts_with rule "RDATE" then
+      let (_, s) = String.split rule ~by:":" in
       { accu with rdate = s :: accu.rdate }
     else
       invalid_arg ("Unrecognized recurrence component: " ^ rule)
