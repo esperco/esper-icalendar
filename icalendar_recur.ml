@@ -73,10 +73,10 @@ let parse_weekdaynum s =
     handle_scanf_error (fun () ->
       Scanf.sscanf s "%d%s" (fun n wday ->
         let ordwk = check Icalendar_v.validate_ordwk n in
-        (Some ordwk, parse_weekday wday)
+        { ord = Some ordwk; day = parse_weekday wday }
       )
     )
-  else Some ((None, parse_weekday s))
+  else Some { ord = None; day = parse_weekday s }
 
 let parse_bywdaylist l =
   let parts = String.nsplit l ~by:"," in
@@ -251,8 +251,8 @@ let print_weekday = function
 let print_bywdaylist l =
   String.concat "," (
     List.map (function
-      | (None, day) -> print_weekday day
-      | (Some ordwk, day) -> string_of_int ordwk ^ print_weekday day
+      | { ord = None; day } -> print_weekday day
+      | { ord = Some ordwk; day } -> string_of_int ordwk ^ print_weekday day
     ) l
   )
 
@@ -345,14 +345,14 @@ exception Unsupported
      so we're unlikely to encounter rules we can't summarize. *)
 
 let rec summarize_weekday = function
-  | (None, `Sunday) -> "Sunday"
-  | (None, `Monday) -> "Monday"
-  | (None, `Tuesday) -> "Tuesday"
-  | (None, `Wednesday) -> "Wednesday"
-  | (None, `Thursday) -> "Thursday"
-  | (None, `Friday) -> "Friday"
-  | (None, `Saturday) -> "Saturday"
-  | (Some n, day) ->
+  | { ord = None; day = `Sunday } -> "Sunday"
+  | { ord = None; day = `Monday } -> "Monday"
+  | { ord = None; day = `Tuesday } -> "Tuesday"
+  | { ord = None; day = `Wednesday } -> "Wednesday"
+  | { ord = None; day = `Thursday } -> "Thursday"
+  | { ord = None; day = `Friday } -> "Friday"
+  | { ord = None; day = `Saturday } -> "Saturday"
+  | { ord = Some n; day } ->
       let ord =
         match n with
         | 1 -> "first"
@@ -365,15 +365,15 @@ let rec summarize_weekday = function
         | -3 -> "third-to-last"
         | _ -> raise Unsupported
       in
-      "the " ^ ord ^ " " ^ summarize_weekday (None, day)
+      "the " ^ ord ^ " " ^ summarize_weekday { ord = None; day }
 
 let has_all_weekdays l =
   let weekdays = [
-    (None, `Monday);
-    (None, `Tuesday);
-    (None, `Wednesday);
-    (None, `Thursday);
-    (None, `Friday);
+    { ord = None; day = `Monday };
+    { ord = None; day = `Tuesday };
+    { ord = None; day = `Wednesday };
+    { ord = None; day = `Thursday };
+    { ord = None; day = `Friday };
   ] in
   List.for_all (fun d -> List.mem d l) weekdays
 
@@ -546,10 +546,14 @@ module Test = struct
                  BYDAY=SU,MO,TU,WE,TH,FR,SA";
       parsed = r `Yearly ~until:(Util_localtime.of_float 949327200.)
                  ~bymonth:[1]
-                 ~byday:[(None, `Sunday); (None, `Monday);
-                         (None, `Tuesday); (None, `Wednesday);
-                         (None, `Thursday); (None, `Friday);
-                         (None, `Saturday)] ();
+                 ~byday:[{ ord = None; day = `Sunday };
+                         { ord = None; day = `Monday };
+                         { ord = None; day = `Tuesday };
+                         { ord = None; day = `Wednesday };
+                         { ord = None; day = `Thursday };
+                         { ord = None; day = `Friday };
+                         { ord = None; day = `Saturday };
+                        ] ();
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=WEEKLY;COUNT=10";
@@ -567,12 +571,16 @@ module Test = struct
     { printed = "RRULE:FREQ=WEEKLY;UNTIL=19971007T000000Z;WKST=SU;BYDAY=TU,TH";
       parsed = r `Weekly ~until:(Util_localtime.of_float 876182400.)
                  ~wkst:`Sunday
-                 ~byday: [(None, `Tuesday); (None, `Thursday)] ();
+                 ~byday:[{ ord = None; day = `Tuesday };
+                         { ord = None; day = `Thursday };
+                        ] ();
       summarized = "Weekly on Tuesday and Thursday, until Oct 7, 1997" };
 
     { printed = "RRULE:FREQ=WEEKLY;COUNT=10;WKST=SU;BYDAY=TU,TH";
       parsed = r `Weekly ~count:10 ~wkst:`Sunday
-                 ~byday:[(None, `Tuesday); (None, `Thursday)] ();
+                 ~byday:[{ ord = None; day = `Tuesday };
+                         { ord = None; day = `Thursday }
+                        ] ();
       summarized = "Weekly on Tuesday and Thursday, 10 times" };
 
     { printed = "RRULE:FREQ=WEEKLY;INTERVAL=2;UNTIL=19971224T000000Z;\
@@ -580,33 +588,41 @@ module Test = struct
       parsed = r `Weekly ~interval:2
                  ~until:(Util_localtime.of_float 882921600.)
                  ~wkst:`Sunday
-                 ~byday:[(None, `Monday); (None, `Wednesday);
-                        (None, `Friday)] ();
+                 ~byday:[{ ord = None; day = `Monday };
+                         { ord = None; day = `Wednesday };
+                         { ord = None; day = `Friday };
+                        ] ();
       summarized = "Every 2 weeks on Monday, Wednesday, and Friday, \
                     until Dec 24, 1997" };
 
     { printed = "RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=8;WKST=SU;BYDAY=TU,TH";
       parsed = r `Weekly ~interval:2 ~count:8 ~wkst:`Sunday
-                 ~byday:[(None, `Tuesday); (None, `Thursday)] ();
+                 ~byday:[{ ord = None; day = `Tuesday };
+                         { ord = None; day = `Thursday };
+                        ] ();
       summarized = "Every 2 weeks on Tuesday and Thursday, 8 times" };
 
     { printed = "RRULE:FREQ=MONTHLY;COUNT=10;BYDAY=1FR";
-      parsed = r `Monthly ~count:10 ~byday:[(Some 1, `Friday)] ();
+      parsed = r `Monthly ~count:10
+                 ~byday:[ { ord = Some 1; day = `Friday }] ();
       summarized = "Monthly on the first Friday, 10 times" };
 
     { printed = "RRULE:FREQ=MONTHLY;UNTIL=19971224T000000Z;BYDAY=1FR";
       parsed = r `Monthly ~until:(Util_localtime.of_float 882921600.)
-                 ~byday: [(Some 1, `Friday)] ();
+                 ~byday:[{ ord = Some 1; day = `Friday }] ();
       summarized = "Monthly on the first Friday, until Dec 24, 1997" };
 
     { printed = "RRULE:FREQ=MONTHLY;INTERVAL=2;COUNT=10;BYDAY=1SU,-1SU";
       parsed = r `Monthly ~interval:2 ~count:10
-                 ~byday: [(Some 1, `Sunday); (Some (-1), `Sunday)] ();
+                 ~byday:[{ ord = Some 1; day = `Sunday };
+                         { ord = Some (-1); day = `Sunday };
+                        ] ();
       summarized = "Every 2 months on the first Sunday and the last Sunday, \
                     10 times" };
 
     { printed = "RRULE:FREQ=MONTHLY;COUNT=6;BYDAY=-2MO";
-      parsed = r `Monthly ~count:6 ~byday:[(Some (-2), `Monday)] ();
+      parsed = r `Monthly ~count:6
+                 ~byday:[{ ord = Some (-2); day = `Monday }] ();
       summarized = "Monthly on the second-to-last Monday, 6 times" };
 
     { printed = "RRULE:FREQ=MONTHLY;BYMONTHDAY=-3";
@@ -628,7 +644,8 @@ module Test = struct
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=MONTHLY;INTERVAL=2;BYDAY=TU";
-      parsed = r `Monthly ~interval:2 ~byday:[(None, `Tuesday)] ();
+      parsed = r `Monthly ~interval:2
+                 ~byday:[{ ord = None; day = `Tuesday }] ();
       summarized = "Every 2 months on Tuesday" };
 
     { printed = "RRULE:FREQ=YEARLY;COUNT=10;BYMONTH=6,7";
@@ -644,48 +661,55 @@ module Test = struct
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=YEARLY;BYDAY=20MO";
-      parsed = r `Yearly ~byday:[(Some 20, `Monday)] ();
+      parsed = r `Yearly ~byday:[{ ord = Some 20; day = `Monday}] ();
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=YEARLY;BYWEEKNO=20;BYDAY=MO";
-      parsed = r `Yearly ~byweekno:[20] ~byday:[(None, `Monday)] ();
+      parsed = r `Yearly ~byweekno:[20]
+                 ~byday:[{ ord = None; day = `Monday}] ();
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=TH";
-      parsed = r `Yearly ~bymonth:[3] ~byday:[(None, `Thursday)] ();
+      parsed = r `Yearly ~bymonth:[3]
+                 ~byday:[{ ord = None; day = `Thursday}] ();
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=YEARLY;BYDAY=TH;BYMONTH=6,7,8";
-      parsed = r `Yearly ~byday:[(None, `Thursday)] ~bymonth:[6; 7; 8] ();
+      parsed = r `Yearly ~byday:[{ ord = None; day = `Thursday}]
+                 ~bymonth:[6; 7; 8] ();
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=MONTHLY;BYDAY=FR;BYMONTHDAY=13";
-      parsed = r `Monthly ~byday:[(None, `Friday)] ~bymonthday:[13] ();
+      parsed = r `Monthly ~byday:[{ ord = None; day = `Friday}]
+                 ~bymonthday:[13] ();
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=MONTHLY;BYDAY=SA;BYMONTHDAY=7,8,9,10,11,12,13";
-      parsed = r `Monthly ~byday:[(None, `Saturday)]
+      parsed = r `Monthly ~byday:[{ ord = None; day = `Saturday}]
                  ~bymonthday:[7; 8; 9; 10; 11; 12; 13] ();
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=YEARLY;INTERVAL=4;BYMONTH=11;BYDAY=TU;\
                BYMONTHDAY=2,3,4,5,6,7,8";
       parsed = r `Yearly ~interval:4 ~bymonth:[11]
-                 ~byday:[(None, `Tuesday)]
+                 ~byday:[{ ord = None; day = `Tuesday}]
                  ~bymonthday:[2; 3; 4; 5; 6; 7; 8] ();
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=MONTHLY;COUNT=3;BYDAY=TU,WE,TH;BYSETPOS=3";
       parsed = r `Monthly ~count:3
-                 ~byday:[(None, `Tuesday); (None, `Wednesday);
-                        (None, `Thursday)]
+                 ~byday:[{ ord = None; day = `Tuesday};
+                         { ord = None; day = `Wednesday};
+                         { ord = None; day = `Thursday}]
                  ~bysetpos:[3] ();
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-2";
-      parsed = r `Monthly ~byday:[(None, `Monday); (None, `Tuesday);
-                                  (None, `Wednesday); (None, `Thursday);
-                                  (None, `Friday)]
+      parsed = r `Monthly ~byday:[{ ord = None; day = `Monday};
+                                  { ord = None; day = `Tuesday};
+                                  { ord = None; day = `Wednesday};
+                                  { ord = None; day = `Thursday};
+                                  { ord = None; day = `Friday}]
                  ~bysetpos:[-2] ();
       summarized = "Custom rule" };
 
@@ -716,13 +740,15 @@ module Test = struct
 
     { printed = "RRULE:FREQ=WEEKLY;INTERVAL=3;COUNT=4;BYDAY=TU,SU;WKST=MO";
       parsed = r `Weekly ~interval:3 ~count:4
-                 ~byday:[(None, `Tuesday); (None, `Sunday)]
+                 ~byday:[{ ord = None; day = `Tuesday};
+                         { ord = None; day = `Sunday}]
                  ~wkst:`Monday ();
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=4;BYDAY=TU,SU;WKST=SU";
       parsed = r `Weekly ~interval:2 ~count:4
-                 ~byday:[(None, `Tuesday); (None, `Sunday)]
+                 ~byday:[{ ord = None; day = `Tuesday};
+                         { ord = None; day = `Sunday}]
                  ~wkst:`Sunday ();
       summarized = "Every 2 weeks on Tuesday and Sunday, 4 times" };
 
