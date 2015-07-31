@@ -39,14 +39,14 @@ let parse_date d =
   handle_scanf_error (fun () ->
     if String.length d = 8 then (* Date *)
       Scanf.sscanf d "%4s%2s%2s" (fun y m d ->
-        Util_localtime.of_string (String.concat "-" [y; m; d])
+        `Date (Util_dateonly.of_string (String.concat "-" [y; m; d]))
       )
     else (* Date-Time *)
       Scanf.sscanf d "%4s%2s%2sT%2s%2s%2s%s" (fun yr mo dy hr mi sc _z ->
-        Util_localtime.of_string (
+        `Date_time (Util_localtime.of_string (
           String.concat "-" [yr; mo; dy] ^ "T" ^
           String.concat ":" [hr; mi; sc]
-        )
+        ))
       )
   )
 
@@ -234,10 +234,14 @@ let print_freq = function
   | `Monthly -> "MONTHLY"
   | `Yearly -> "YEARLY"
 
-let print_date d =
-  let open Util_localtime in
-  Printf.sprintf "%04d%02d%02dT%02d%02d%02dZ"
-    d.year d.month d.day d.hour d.min (int_of_float d.sec)
+let print_date = function
+  | `Date_time d ->
+      let open Util_localtime in
+      Printf.sprintf "%04d%02d%02dT%02d%02d%02dZ"
+        d.year d.month d.day d.hour d.min (int_of_float d.sec)
+  | `Date d ->
+      let open Util_dateonly in
+      Printf.sprintf "%04d%02d%02d" d.year d.month d.day
 
 let print_weekday = function
   | `Sunday -> "SU"
@@ -389,11 +393,16 @@ let summarize_weekdays = function
       String.concat ", " (List.map summarize_weekday rest)
         ^ ", and " ^ summarize_weekday last
 
-let summarize_date d =
-  let open Util_localtime in
+let summarize_date =
   let months = [|"Jan"; "Feb"; "Mar"; "Apr"; "May"; "Jun";
                  "Jul"; "Aug"; "Sep"; "Oct"; "Nov"; "Dec"|] in
-  Printf.sprintf "%s %d, %d" months.(d.month - 1) d.day d.year
+  function
+  | `Date_time d ->
+      let open Util_localtime in
+      Printf.sprintf "%s %d, %d" months.(d.month - 1) d.day d.year
+  | `Date d ->
+      let open Util_dateonly in
+      Printf.sprintf "%s %d, %d" months.(d.month - 1) d.day d.year
 
 let extract_by_filter period rule =
   let other_filters = [
@@ -519,6 +528,8 @@ module Test = struct
 
   let r freq = Icalendar_v.create_recur ~freq
 
+  let dt unix = `Date_time (Util_localtime.of_float (float_of_int unix))
+
   (* Examples from RFC 5545 sec. 3.8.5.3. Recurrence Rule *)
   let examples = [
     { printed = "RRULE:FREQ=DAILY;COUNT=10";
@@ -526,7 +537,7 @@ module Test = struct
       summarized = "Daily, 10 times" };
 
     { printed = "RRULE:FREQ=DAILY;UNTIL=19971224T000000Z";
-      parsed = r `Daily ~until:(Util_localtime.of_float 882921600.) ();
+      parsed = r `Daily ~until:(dt 882921600) ();
       summarized = "Daily, until Dec 24, 1997" };
 
     { printed = "RRULE:FREQ=DAILY;INTERVAL=2";
@@ -538,13 +549,13 @@ module Test = struct
       summarized = "Every 10 days, 5 times" };
 
     { printed = "RRULE:FREQ=DAILY;UNTIL=20000131T140000Z;BYMONTH=1";
-      parsed = r `Daily ~until:(Util_localtime.of_float 949327200.)
+      parsed = r `Daily ~until:(dt 949327200)
                  ~bymonth:[1] ();
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=YEARLY;UNTIL=20000131T140000Z;BYMONTH=1;\
                  BYDAY=SU,MO,TU,WE,TH,FR,SA";
-      parsed = r `Yearly ~until:(Util_localtime.of_float 949327200.)
+      parsed = r `Yearly ~until:(dt 949327200)
                  ~bymonth:[1]
                  ~byday:[{ ord = None; day = `Sunday };
                          { ord = None; day = `Monday };
@@ -561,7 +572,7 @@ module Test = struct
       summarized = "Weekly, 10 times" };
 
     { printed = "RRULE:FREQ=WEEKLY;UNTIL=19971224T000000Z";
-      parsed = r `Weekly ~until:(Util_localtime.of_float 882921600.) ();
+      parsed = r `Weekly ~until:(dt 882921600) ();
       summarized = "Weekly, until Dec 24, 1997" };
 
     { printed = "RRULE:FREQ=WEEKLY;INTERVAL=2;WKST=SU";
@@ -569,7 +580,7 @@ module Test = struct
       summarized = "Every 2 weeks" };
 
     { printed = "RRULE:FREQ=WEEKLY;UNTIL=19971007T000000Z;WKST=SU;BYDAY=TU,TH";
-      parsed = r `Weekly ~until:(Util_localtime.of_float 876182400.)
+      parsed = r `Weekly ~until:(dt 876182400)
                  ~wkst:`Sunday
                  ~byday:[{ ord = None; day = `Tuesday };
                          { ord = None; day = `Thursday };
@@ -586,7 +597,7 @@ module Test = struct
     { printed = "RRULE:FREQ=WEEKLY;INTERVAL=2;UNTIL=19971224T000000Z;\
                  WKST=SU;BYDAY=MO,WE,FR";
       parsed = r `Weekly ~interval:2
-                 ~until:(Util_localtime.of_float 882921600.)
+                 ~until:(dt 882921600)
                  ~wkst:`Sunday
                  ~byday:[{ ord = None; day = `Monday };
                          { ord = None; day = `Wednesday };
@@ -608,7 +619,7 @@ module Test = struct
       summarized = "Monthly on the first Friday, 10 times" };
 
     { printed = "RRULE:FREQ=MONTHLY;UNTIL=19971224T000000Z;BYDAY=1FR";
-      parsed = r `Monthly ~until:(Util_localtime.of_float 882921600.)
+      parsed = r `Monthly ~until:(dt 882921600)
                  ~byday:[{ ord = Some 1; day = `Friday }] ();
       summarized = "Monthly on the first Friday, until Dec 24, 1997" };
 
@@ -715,7 +726,7 @@ module Test = struct
 
     { printed = "RRULE:FREQ=HOURLY;INTERVAL=3;UNTIL=19970902T170000Z";
       parsed = r `Hourly ~interval:3
-                 ~until:(Util_localtime.of_float 873219600.) ();
+                 ~until:(dt 873219600) ();
       summarized = "Custom rule" };
 
     { printed = "RRULE:FREQ=MINUTELY;INTERVAL=15;COUNT=6";
