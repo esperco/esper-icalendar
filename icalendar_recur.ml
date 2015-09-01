@@ -772,7 +772,9 @@ module Test = struct
     List.iter (fun { printed; parsed } ->
       let expected = Icalendar_v.create_recurrence ~rrule:[parsed] () in
       try assert (parse [printed] = expected)
-      with e -> logf `Error "Wrong parsed value for %s" printed; Util_exn.reraise e
+      with e ->
+        logf `Error "Wrong parsed value for %s" printed;
+        Trax.raise __LOC__ e
     ) examples;
     true
 
@@ -792,7 +794,7 @@ module Test = struct
         )
       with e ->
         logf `Error "Wrong printed output %s (expected %s)" output printed;
-        Util_exn.reraise e
+        Trax.raise __LOC__ e
     ) examples;
     true
 
@@ -803,7 +805,7 @@ module Test = struct
       with e ->
         logf `Error "Wrong summary \"%s\" for %s (expected %s)"
           summary printed summarized;
-        Util_exn.reraise e
+        Trax.raise __LOC__ e
     ) examples;
     true
 
