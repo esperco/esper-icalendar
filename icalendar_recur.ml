@@ -43,7 +43,7 @@ let parse_date d =
       )
     else (* Date-Time *)
       Scanf.sscanf d "%4s%2s%2sT%2s%2s%2s%s" (fun yr mo dy hr mi sc _z ->
-        `Date_time (Util_localtime.of_string (
+        `Date_time (Util_localtime.No_timezone.of_string (
           String.concat "-" [yr; mo; dy] ^ "T" ^
           String.concat ":" [hr; mi; sc]
         ))
@@ -528,7 +528,12 @@ module Test = struct
 
   let r freq = Icalendar_v.create_recur ~freq
 
-  let dt unix = `Date_time (Util_localtime.of_float (float_of_int unix))
+  let dt unix =
+    `Date_time (
+      Util_localtime.of_float
+        ~timezone:Util_timezone.utc
+        (float_of_int unix)
+    )
 
   (* Examples from RFC 5545 sec. 3.8.5.3. Recurrence Rule *)
   let examples = [
