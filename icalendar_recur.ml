@@ -1,3 +1,8 @@
+(*
+   iCalendar recurrence rule parsing
+   https://icalendar.org/iCalendar-RFC-5545/3-8-5-3-recurrence-rule.html
+*)
+
 open Batteries
 open Icalendar_t
 open Log
@@ -103,7 +108,7 @@ let parse_rrule (rrule : string) : recur =
   let (freq, others) =
     match List.partition is_freq parts with
     | ([], _) -> invalid_arg ("Missing FREQ in " ^ rrule)
-    | ([f], rest) -> 
+    | ([f], rest) ->
         let freq = snd (String.split f ~by:"=") in
         (parse_freq freq, rest)
     | (fs, _) -> invalid_arg ("Multiple FREQs in " ^ rrule)
