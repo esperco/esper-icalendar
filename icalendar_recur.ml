@@ -17,7 +17,6 @@ let handle_scanf_error f =
   try Some (f ())
   with Scanf.Scan_failure _ | Failure _ | End_of_file -> None
 
-
 (* Parsing *)
 
 let parse_int_list valid l =
@@ -212,17 +211,15 @@ let try_parse rule accu =
   else
     invalid_arg ("Unrecognized recurrence component: " ^ rule)
 
-let parse (rules : string list) : recurrence =
+let parse
+    ?(handle_error = ignore)
+    (rules : string list) : recurrence =
   let recurrence = Icalendar_v.create_recurrence () in
   List.fold_right (fun rule accu ->
     try try_parse rule accu
     with e ->
-      let err =
-        Printexc.to_string e
-          ^ " raised during parsing of recurrence rule "
-          ^ rule
-      in
-      invalid_arg err
+      handle_error e;
+      accu
   ) rules recurrence
 
 (* Printing *)
